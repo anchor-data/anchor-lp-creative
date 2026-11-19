@@ -62,7 +62,7 @@ export function getEnv(): AppEnv {
     CF_ACCESS_AUD: str(raw, "CF_ACCESS_AUD"),
     INITIAL_ADMIN_EMAILS: str(raw, "INITIAL_ADMIN_EMAILS"),
     ANTHROPIC_API_KEY: str(raw, "ANTHROPIC_API_KEY"),
-    CLAUDE_MODEL_MAIN: str(raw, "CLAUDE_MODEL_MAIN") ?? "claude-opus-5-5",
+    CLAUDE_MODEL_MAIN: str(raw, "CLAUDE_MODEL_MAIN") ?? "claude-sonnet-5-5",
     CLAUDE_MODEL_LIGHT: str(raw, "CLAUDE_MODEL_LIGHT") ?? "claude-haiku-5-5",
     SQUAD_BEYOND_BASE_URL: str(raw, "SQUAD_BEYOND_BASE_URL"),
     SQUAD_BEYOND_API_KEY: str(raw, "SQUAD_BEYOND_API_KEY"),

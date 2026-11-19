@@ -20,7 +20,7 @@
   "ai": { "binding": "AI" },
   "vars": {
     "AUTH_MODE": "access",
-    "CLAUDE_MODEL_MAIN": "claude-opus-5-5",
+    "CLAUDE_MODEL_MAIN": "claude-sonnet-5-5",
     "CLAUDE_MODEL_LIGHT": "claude-haiku-5-5"
   },
   // Spec ch.7. One hourly trigger dispatches every job by JST hour in code,
@@ -39,7 +39,7 @@
       "ai": { "binding": "AI" },
       "vars": {
         "AUTH_MODE": "access",
-        "CLAUDE_MODEL_MAIN": "claude-opus-5-5",
+        "CLAUDE_MODEL_MAIN": "claude-sonnet-5-5",
         "CLAUDE_MODEL_LIGHT": "claude-haiku-5-5"
       },
       "triggers": { "crons": ["0 * * * *"] }

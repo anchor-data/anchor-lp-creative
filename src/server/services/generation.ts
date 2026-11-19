@@ -168,7 +168,7 @@ interface StreamResult {
   model: string;
 }
 
-/** One streamed plan. Uses server-side refusal fallbacks (beta) as the skill recommends for Opus 5.5. */
+/** One streamed plan. Server-side refusal fallbacks (beta, "default" routing) retry a declined request on another model. */
 async function streamPlan(base: string, instruction: string, onDelta: (text: string) => void): Promise<StreamResult> {
   const env = getEnv();
   const stream = claude().beta.messages.stream({

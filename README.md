@@ -5,7 +5,7 @@ Internal web app from 「開発仕様書 第1版（2026-11-13）」 and the Figm
 - **App**: Next.js 16 (App Router, route handlers under `/api`), deployed to Cloudflare Workers with `@opennextjs/cloudflare`
 - **DB**: Turso (libSQL) via Drizzle + raw SQL. `migrations/0001_init.sql` holds the spec ch.5 DDL and is the source of truth
 - **Files**: R2 (`FILES` binding), private. Served only through `/api/files/*` to signed-in users
-- **AI**: Claude API (`claude-opus-5-5` for generation, `claude-haiku-5-5` for tags, article blocks and LP checks). Embeddings: Workers AI `@cf/baai/bge-m3` (1024 dims)
+- **AI**: Claude API (`claude-sonnet-5-5` for generation, `claude-haiku-5-5` for tags, article blocks and LP checks). Embeddings: Workers AI `@cf/baai/bge-m3` (1024 dims)
 - **Auth**: Cloudflare Access (Google SSO). Every request verifies `Cf-Access-Jwt-Assertion`. Roles are viewer / editor / admin (spec ch.3), enforced in the API
 
 ## Local development

@@ -1,26 +1,70 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/*
+ * Anchor design system tokens (from the Figma "Anchor 記事LP" file).
+ * Background white / #F2F2F2, primary = red fill + white text, secondary = white + black
+ * border, selected = orange. No rounded corners, no shadows, no green/blue.
+ */
+@theme {
+  --color-ink: #000000;
+  --color-ink-2: #333333;
+  --color-ink-3: #444444;
+  --color-ink-4: #757575;
+  --color-red: #ec0313;
+  --color-red-dark: #c4020f;
+  --color-orange: #f87a00;
+  --color-orange-tint: #fef1e5;
+  --color-canvas: #f2f2f2;
+  --color-line: #e0e0e0;
+  --color-line-2: #b3b3b3;
+  --color-line-3: #ebebeb;
+  --color-chip: #efefef;
+  --color-thumb: #d9d9d9;
+  --color-thumb-2: #ebebeb;
+  --color-header: #000000;
+  --color-header-field: #1a1a1a;
+  --color-header-line: #444444;
+  --color-header-muted: #bdbdbd;
+
+  --font-sans: var(--font-noto-sans-jp), "Hiragino Sans", "Hiragino Kaku Gothic ProN", Meiryo, sans-serif;
+
+  --radius-none: 0;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html,
+body {
+  background: var(--color-canvas);
+  color: var(--color-ink);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Square corners everywhere, per the design system. */
+*,
+*::before,
+*::after {
+  border-radius: 0;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-orange);
+  outline-offset: 1px;
+}
+
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+@keyframes skeleton {
+  0% { background-color: #ebebeb; }
+  50% { background-color: #f5f5f5; }
+  100% { background-color: #ebebeb; }
+}
+.skeleton {
+  animation: skeleton 1.2s ease-in-out infinite;
 }

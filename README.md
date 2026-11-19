@@ -1,36 +1,75 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 勝ちパターンDB（クリエイティブ×記事LP 蓄積・生成ツール）
 
-## Getting Started
+Internal web app from 「開発仕様書 第1版（2026-11-13）」 and the Figma file "Anchor 記事LP".
 
-First, run the development server:
+- **App**: Next.js 16 (App Router, route handlers under `/api`), deployed to Cloudflare Workers with `@opennextjs/cloudflare`
+- **DB**: Turso (libSQL) via Drizzle + raw SQL. `migrations/0001_init.sql` holds the spec ch.5 DDL and is the source of truth
+- **Files**: R2 (`FILES` binding), private. Served only through `/api/files/*` to signed-in users
+- **AI**: Claude API (`claude-opus-5-5` for generation, `claude-haiku-5-5` for tags, article blocks and LP checks). Embeddings: Workers AI `@cf/baai/bge-m3` (1024 dims)
+- **Auth**: Cloudflare Access (Google SSO). Every request verifies `Cf-Access-Jwt-Assertion`. Roles are viewer / editor / admin (spec ch.3), enforced in the API
+
+## Local development
 
 ```bash
+npm install
+cp .env.example .env.local        # TURSO_DATABASE_URL=file:local.db, AUTH_MODE=dev
+cp .dev.vars.example .dev.vars    # overrides wrangler vars in `next dev`
+npm run db:migrate
+npm run db:seed -- --sample       # master data + Figma sample cases
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+`AUTH_MODE=dev` signs everyone in as `DEV_USER_EMAIL`. Emails listed in `INITIAL_ADMIN_EMAILS` become admins on first login.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+npm test          # judge logic (spec ch.13 cases), recommendation score, permissions, formatting, file checks
+npm run typecheck
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Deploy (Cloudflare)
 
-## Learn More
+1. Create the buckets: `npx wrangler r2 bucket create anchor-lp-files` (and `anchor-lp-files-staging`)
+2. Set the secrets (production; repeat with `--env staging`):
+   ```bash
+   npx wrangler secret put TURSO_DATABASE_URL
+   npx wrangler secret put TURSO_AUTH_TOKEN
+   npx wrangler secret put ANTHROPIC_API_KEY
+   npx wrangler secret put CF_ACCESS_TEAM_DOMAIN   # your-team.cloudflareaccess.com
+   npx wrangler secret put CF_ACCESS_AUD           # Access application AUD tag
+   npx wrangler secret put INITIAL_ADMIN_EMAILS
+   npx wrangler secret put SERVICE_TOKEN           # random string; used by the cron self-call and DPro method B
+   npx wrangler secret put SQUAD_BEYOND_BASE_URL   # once U-08 is answered
+   npx wrangler secret put SQUAD_BEYOND_API_KEY
+   npx wrangler secret put NOTIFY_WEBHOOK_URL      # Slack/Chatwork webhook (U-05)
+   ```
+3. Put a Cloudflare Access application (Google, company domain only) in front of the Worker's hostname.
+4. Apply the schema: `npm run db:migrate:remote` (reads `.env.turso`, which is gitignored)
+5. Deploy: `npm run deploy` (or `npm run deploy:staging`)
 
-To learn more about Next.js, take a look at the following resources:
+Cron: one hourly trigger (`0 * * * *`). `worker.ts` calls `/api/internal/cron` through the self service binding, and `src/server/jobs.ts` runs jobs by JST hour (J-01 5:00, J-02/J-03 6:00, J-04 7:00, J-07/J-08 8:00, J-09 3:00, J-14/J-15 4:00, J-10 9:00). Admins can re-run any job from 管理画面 → 連携とジョブ.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Layout
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```
+migrations/            spec DDL
+scripts/               migrate, seed
+worker.ts              Worker entry: OpenNext fetch + scheduled()
+src/lib/domain/        pure logic shared by server and UI (judge, recommend, permissions, schemas)
+src/server/            auth, db, services, jobs, Squad beyond client
+src/app/api/           internal API (spec ch.10), standard error envelope
+src/app/(app)/         screens
+```
 
-## Deploy on Vercel
+## Status against the spec
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Phase 1 screens built: S-01 gallery, S-02 detail, S-04 registration wizard (autosaved drafts, live judgment, AI tags and block decomposition), S-05 Squad beyond candidates, S-06 DPro candidates, S-07 generation (recommendations, streamed set generation, partial regeneration, manual edit and versions, Markdown/PDF export, link to a delivered combination), S-08 my generations, plus A-01, A-02, A-05, A-06, A-07 and A-08.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Not done yet or stubbed:
+- **Squad beyond API (U-08)**: `src/server/integrations/squad-beyond.ts` has the 4 logical calls, rate limits, retries and auth-error handling. The endpoint paths and field names are placeholders until the API document arrives
+- **DPro (U-10)**: method B intake (`POST /api/dpro/candidates` with `x-service-token`) works. Method A (MCP from the server) is not built
+- **Screenshots (J-11)**: no Browser Rendering yet. Article capture extracts text only, and screenshots are uploaded by hand
+- **Large uploads**: files go through the Worker (videos capped at 95MB). Presigned multipart R2 upload for files up to 500MB is still to do
+- **Queues**: J-03 to J-05 loop over pages inline. Moving them onto Cloudflare Queues is still to do
+- **Keyword search**: LIKE on `search_text` (allowed by the spec at thousands of rows). FTS5 trigram still needs to be verified on Turso (U-01)
+- **S-12 CSV import, combination edit (PATCH), S-03 compare, S-09 approval flow, S-10 trends, S-11 collections, A-03 NG dictionary editor, A-04 DPro conditions**: not built (S-09 shows approved playbooks read-only)
+- **Categories**: the 8 major categories are placeholders until 要件定義書 ch.9 is supplied. Edit them in A-01

@@ -1,0 +1,7 @@
+# Local overrides for wrangler vars (next dev + opennextjs-cloudflare preview).
+TURSO_DATABASE_URL=file:local.db
+AUTH_MODE=dev
+DEV_USER_EMAIL=admin@example.com
+INITIAL_ADMIN_EMAILS=admin@example.com
+ANTHROPIC_API_KEY=
+SERVICE_TOKEN=local-dev-token

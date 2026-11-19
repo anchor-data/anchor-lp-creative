@@ -1,0 +1,48 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "anchor-lp",
+  // Custom entry: wraps the OpenNext worker and adds the Cron (scheduled) handler.
+  "main": "worker.ts",
+  "compatibility_date": "2026-11-01",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "services": [
+    { "binding": "WORKER_SELF_REFERENCE", "service": "anchor-lp" }
+  ],
+  "r2_buckets": [
+    // Creatives, thumbnails, LP screenshots. Not a public bucket.
+    { "binding": "FILES", "bucket_name": "anchor-lp-files" }
+  ],
+  // Embeddings (@cf/baai/bge-m3, 1024 dims)
+  "ai": { "binding": "AI" },
+  "vars": {
+    "AUTH_MODE": "access",
+    "CLAUDE_MODEL_MAIN": "claude-opus-5-5",
+    "CLAUDE_MODEL_LIGHT": "claude-haiku-5-5"
+  },
+  // Spec ch.7. One hourly trigger dispatches every job by JST hour in code,
+  // which keeps us under the Cron Trigger limit.
+  "triggers": { "crons": ["0 * * * *"] },
+  "observability": { "enabled": true },
+  "env": {
+    "staging": {
+      "name": "anchor-lp-staging",
+      "services": [
+        { "binding": "WORKER_SELF_REFERENCE", "service": "anchor-lp-staging" }
+      ],
+      "r2_buckets": [
+        { "binding": "FILES", "bucket_name": "anchor-lp-files-staging" }
+      ],
+      "ai": { "binding": "AI" },
+      "vars": {
+        "AUTH_MODE": "access",
+        "CLAUDE_MODEL_MAIN": "claude-opus-5-5",
+        "CLAUDE_MODEL_LIGHT": "claude-haiku-5-5"
+      },
+      "triggers": { "crons": ["0 * * * *"] }
+    }
+  }
+}

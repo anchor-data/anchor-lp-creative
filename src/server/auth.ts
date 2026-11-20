@@ -1,12 +1,13 @@
 import "server-only";
 import { cache } from "react";
 import { headers } from "next/headers";
-import { createRemoteJWKSet, jwtVerify } from "jose";
+import { createRemoteJWKSet } from "jose";
 import { eq } from "drizzle-orm";
 import { ulid } from "ulid";
 import { getDb } from "./db/client";
 import { users } from "./db/schema";
 import { getEnv } from "./env";
+import { verifyAccessToken } from "./access-jwt";
 import { ApiError, forbidden } from "./http";
 import { can, type Action } from "@/lib/domain/permissions";
 import type { Role } from "@/lib/domain/constants";
@@ -28,7 +29,7 @@ function jwks(teamDomain: string): ReturnType<typeof createRemoteJWKSet> {
   return set;
 }
 
-/** Verifies Cf-Access-Jwt-Assertion: signature, issuer, audience and expiry (spec ch.3 step 2). */
+/** Verifies Cf-Access-Jwt-Assertion (see verifyAccessToken) and returns the email. */
 async function emailFromAccess(token: string | null): Promise<string> {
   const env = getEnv();
   if (!token) throw new ApiError("UNAUTHENTICATED", "ログインが必要です");
@@ -36,13 +37,14 @@ async function emailFromAccess(token: string | null): Promise<string> {
     throw new Error("CF_ACCESS_TEAM_DOMAIN / CF_ACCESS_AUD are not configured");
   }
   try {
-    const { payload } = await jwtVerify(token, jwks(env.CF_ACCESS_TEAM_DOMAIN), {
-      issuer: `https://${env.CF_ACCESS_TEAM_DOMAIN}`,
+    const { email } = await verifyAccessToken(token, {
+      teamDomain: env.CF_ACCESS_TEAM_DOMAIN,
       audience: env.CF_ACCESS_AUD,
+      keySet: jwks(env.CF_ACCESS_TEAM_DOMAIN),
     });
-    if (typeof payload.email !== "string") throw new Error("email claim missing");
-    return payload.email.toLowerCase();
-  } catch {
+    return email;
+  } catch (error: unknown) {
+    console.error(JSON.stringify({ level: "warn", msg: "Cf-Access JWT rejected", error: error instanceof Error ? error.message : String(error) }));
     throw new ApiError("UNAUTHENTICATED", "ログイン情報を確認できませんでした。再度ログインしてください");
   }
 }

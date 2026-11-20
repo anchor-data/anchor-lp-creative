@@ -95,12 +95,12 @@ export async function register(user: CurrentUser, input: RegistrationInput): Pro
   const combinationId = ulid();
   statements.push({
     sql: `INSERT INTO combinations (id, product_id, creative_id, article_id, media, start_date, end_date, origin, metrics_source, sb_version_id, sb_creative_id,
-            judge_manual, judge_manual_reason, judge_manual_by, judge_manual_at, generation_version_id, created_by, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, 'own', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            judge_manual, judge_manual_reason, judge_manual_by, judge_manual_at, target_cpa, generation_version_id, created_by, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, 'own', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     args: [
       combinationId, productId, creativeId, articleId, cb.media, cb.startDate, cb.endDate || null, cb.metricsSource,
       cb.metricsSource === "sb" ? cb.sbVersionId! : null, cb.metricsSource === "sb" ? cb.sbCreativeId! : null,
-      cb.override?.judge ?? null, cb.override?.reason ?? null, cb.override ? user.id : null, cb.override ? now : null,
+      cb.override?.judge ?? null, cb.override?.reason || null, cb.override ? user.id : null, cb.override ? now : null, cb.targetCpa ?? null,
       cb.generationVersionId ?? null, user.id, now, now,
     ],
   });
@@ -191,7 +191,7 @@ export async function deleteDraft(user: CurrentUser, id: string): Promise<void> 
 
 // --- products & pickers ---------------------------------------------------------
 
-export async function searchProducts(q: string): Promise<{ id: string; name: string; clientName: string; categoryId: string; categoryName: string; target: string; usp: string | null; offer: string | null }[]> {
+export async function searchProducts(q: string): Promise<{ id: string; name: string; clientName: string; categoryId: string; categoryName: string; target: string; priceRange: string | null; usp: string | null; offer: string | null }[]> {
   const res = await getRawClient().execute({
     sql: `SELECT p.*, c.name cname FROM products p JOIN categories c ON c.id = p.category_id
           WHERE p.deleted_at IS NULL AND (p.name LIKE ? OR p.client_name LIKE ?) ORDER BY p.updated_at DESC LIMIT 30`,
@@ -199,7 +199,7 @@ export async function searchProducts(q: string): Promise<{ id: string; name: str
   });
   return res.rows.map((r) => ({
     id: String(r.id), name: String(r.name), clientName: String(r.client_name), categoryId: String(r.category_id), categoryName: String(r.cname),
-    target: [r.target_gender, r.target_age, r.target_pain].filter(Boolean).join("・"), usp: r.usp ? String(r.usp) : null, offer: r.offer ? String(r.offer) : null,
+    target: [r.target_gender, r.target_age, r.target_pain].filter(Boolean).join("・"), priceRange: r.price_range ? String(r.price_range) : null, usp: r.usp ? String(r.usp) : null, offer: r.offer ? String(r.offer) : null,
   }));
 }
 

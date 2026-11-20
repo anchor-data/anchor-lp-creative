@@ -3,16 +3,12 @@ import { notFound } from "next/navigation";
 import { requireUser } from "@/server/auth";
 import { ApiError } from "@/server/http";
 import { getCombinationDetail, getDailyMetrics, getRelated, type CombinationDetail, type RelatedRow } from "@/server/services/combination-detail";
-import { blockLabel, JUDGE_LABEL, mediaLabel, METRIC_LABEL } from "@/lib/domain/constants";
-import { formatMetric, thresholdText } from "@/lib/domain/judge-text";
+import { blockLabel, JUDGE_LABEL, mediaLabel } from "@/lib/domain/constants";
 import { can, canDelete } from "@/lib/domain/permissions";
 import { compactNumber, date, dateTime, int, pct, yen } from "@/lib/format";
-import type { MetricKey } from "@/lib/domain/judge";
 import { Card, CardTitle, Chip, JudgeBadge, LegalNote, LinkButton, MarketJudgeBadge, MediaBadge, SourceBadge, StatTile } from "@/components/ui";
 import { DetailActions, JudgeBasisLine, MemoComposer } from "./detail-client";
 import { DailyChart } from "./daily-chart";
-
-const JUDGE_METRICS: MetricKey[] = ["spend", "cpa", "mcvr", "cv", "fsver", "oar"];
 
 export default async function CombinationPage({ params, searchParams }: PageProps<"/combinations/[id]">) {
   const user = await requireUser("view");
@@ -26,8 +22,6 @@ export default async function CombinationPage({ params, searchParams }: PageProp
     throw err;
   }
   const [related, daily] = await Promise.all([getRelated(id), d.metricsSource === "sb" ? getDailyMetrics(id) : Promise.resolve([])]);
-  const criteriaOf = (m: MetricKey) => d.criteria?.rules.find((r) => r.metric === m && r.enabled);
-  const valueOf = (m: MetricKey): number | null => d.totals[m];
   const kindLabel = d.creative.kind === "video" ? `動画 ${d.creative.durationSec ? `${Math.round(d.creative.durationSec)}秒` : ""}${d.creative.width && d.creative.height ? `・${aspect(d.creative.width, d.creative.height)}` : ""}` : `バナー${d.creative.width ? `・${d.creative.width}×${d.creative.height}` : ""}`;
 
   return (
@@ -46,7 +40,7 @@ export default async function CombinationPage({ params, searchParams }: PageProp
         <div className="min-w-0 flex flex-col gap-2.5">
           <div className="flex flex-wrap gap-1.5">
             <SourceBadge origin={d.origin} long />
-            {d.origin === "market" ? <MarketJudgeBadge /> : <JudgeBadge judge={d.judge} manual={Boolean(d.judgeManual)} />}
+            {d.origin === "market" ? <MarketJudgeBadge /> : <JudgeBadge judge={d.judge} manual={Boolean(d.judgeManual) && !d.judgeManual?.reason} detail={d.judgeManual?.reason || undefined} />}
             <MediaBadge media={d.media} />
             <Chip>配信期間 {date(d.startDate)}〜{d.endDate ? date(d.endDate) : "配信中"}</Chip>
           </div>
@@ -57,9 +51,9 @@ export default async function CombinationPage({ params, searchParams }: PageProp
             {d.category.parentName ? `${d.category.parentName} ＞ ` : ""}
             {d.category.name}　｜　登録：{d.createdBy.name}　｜　{date(d.createdAt)}
           </p>
-          {d.origin === "own" ? <JudgeBasisLine basis={d.basis} /> : null}
+          {d.origin === "own" && !d.judgeManual ? <JudgeBasisLine basis={d.basis} /> : null}
           {d.autoChangedSinceManual ? <p className="text-sm text-orange font-bold">自動判定が変わりました（現在の自動判定：{d.judgeAuto ? JUDGE_LABEL[d.judgeAuto] : "—"}）</p> : null}
-          {d.judgeManual ? <p className="text-xs text-ink-3">手動判定の理由：{d.judgeManual.reason}（{d.judgeManual.by ?? "—"}・{dateTime(d.judgeManual.at)}）</p> : null}
+          {d.judgeManual ? <p className="text-xs text-ink-3">手動判定（{d.judgeManual.by ?? "—"}・{dateTime(d.judgeManual.at)}）</p> : null}
         </div>
         <DetailActions
           id={d.id}
@@ -73,18 +67,18 @@ export default async function CombinationPage({ params, searchParams }: PageProp
 
       {d.origin === "own" ? (
         <>
-          <div className="grid gap-3 grid-cols-2 md:grid-cols-3 xl:grid-cols-6">
-            {JUDGE_METRICS.map((m) => {
-              const rule = criteriaOf(m);
-              const note = rule && (rule.hit !== null || rule.early !== null) ? `基準 ${thresholdText({ metric: m, direction: rule.direction }, d.basis?.phase === "early" ? (rule.early ?? rule.hit) : rule.hit)}` : undefined;
-              return <StatTile key={m} label={METRIC_LABEL[m]} value={formatMetric(m, valueOf(m))} note={note} />;
-            })}
+          <div className="grid gap-3 grid-cols-2 md:grid-cols-3 xl:grid-cols-5">
+            <StatTile label="消化額" value={yen(d.totals.spend)} />
+            <StatTile label="CPA" note={d.targetCpa !== null ? `目標 ${yen(d.targetCpa)}` : undefined} value={yen(d.totals.cpa)} />
+            <StatTile label="CVR" value={pct(d.totals.cvr)} />
+            <StatTile label="CTR" value={pct(d.totals.ctr)} />
+            <StatTile label="記事→商品LP遷移率" value={pct(d.totals.mcvr)} />
           </div>
           <Card className="p-4">
             <p className="text-xs text-ink-3 mb-2">参考指標</p>
             <dl className="grid gap-x-6 gap-y-2 grid-cols-2 md:grid-cols-4 xl:grid-cols-6 text-sm">
               {[
-                ["PV", int(d.totals.pv)], ["CLICK", int(d.totals.click)], ["CTR", pct(d.totals.ctr)], ["CVR", pct(d.totals.cvr)],
+                ["CV数", int(d.totals.cv)], ["FSVER", pct(d.totals.fsver)], ["OAR", pct(d.totals.oar)], ["PV", int(d.totals.pv)], ["CLICK", int(d.totals.click)],
                 ["CTVR", pct(d.totals.ctvr)], ["MCPA", yen(d.totals.mcpa)], ["FVER", pct(d.totals.fver)], ["SVER", pct(d.totals.sver)],
                 ["媒体IMP", int(d.totals.mediaImp)], ["媒体CTR", pct(d.totals.mediaCtr)], ["媒体CPM", yen(d.totals.mediaCpm)], ["媒体CPC", yen(d.totals.mediaCpc)],
               ].map(([k, v]) => (

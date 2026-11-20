@@ -164,6 +164,7 @@ export const combinations = sqliteTable("combinations", {
   judgeManualReason: text("judge_manual_reason"),
   judgeManualBy: text("judge_manual_by"),
   judgeManualAt: text("judge_manual_at"),
+  targetCpa: integer("target_cpa"),
   generationVersionId: text("generation_version_id"),
   searchText: text("search_text"),
   embeddingModel: text("embedding_model"),

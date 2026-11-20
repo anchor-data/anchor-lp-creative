@@ -1,6 +1,7 @@
 {
   "version": "0.0.1",
   "configurations": [
-    { "name": "web", "runtimeExecutable": "npm", "runtimeArgs": ["run", "dev"], "port": 3000 }
+    { "name": "web", "runtimeExecutable": "npm", "runtimeArgs": ["run", "dev"], "port": 3000 },
+    { "name": "web-local-db", "runtimeExecutable": "env", "runtimeArgs": ["TURSO_DATABASE_URL=file:local.db", "TURSO_AUTH_TOKEN=", "npm", "run", "dev"], "port": 3000 }
   ]
 }

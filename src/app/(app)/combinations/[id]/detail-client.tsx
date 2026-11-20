@@ -111,7 +111,7 @@ export function DetailActions(props: { id: string; updatedAt: string; origin: "o
               <option value="miss">外れ</option>
             </Select>
           </Field>
-          <Field label="理由" required hint="1〜500文字" error={reason.length > 500 ? "理由は500文字以内にしてください" : null}>
+          <Field label="理由（任意）" hint="500文字以内。例：CPA目標内・消化額基準クリア" error={reason.length > 500 ? "理由は500文字以内にしてください" : null}>
             <Textarea value={reason} onChange={(e) => setReason(e.target.value)} />
           </Field>
           <div className="flex justify-end gap-2">
@@ -119,7 +119,7 @@ export function DetailActions(props: { id: string; updatedAt: string; origin: "o
             <Button
               size="sm"
               variant="primary"
-              disabled={busy || reason.trim().length === 0 || reason.length > 500}
+              disabled={busy || reason.length > 500}
               onClick={async () => {
                 const okDone = await run(() => api(`/api/combinations/${props.id}/judge-override`, { method: "PUT", json: { judge, reason, updatedAt: props.updatedAt } }), "判定を手動で変更しました");
                 if (okDone) setOverriding(false);

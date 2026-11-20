@@ -1,42 +1,50 @@
+import Link from "next/link";
 import { requireUser } from "@/server/auth";
-import { listDproCandidates } from "@/server/services/candidates";
-import { listCategoriesAdmin } from "@/server/services/admin";
-import { mediaLabel } from "@/lib/domain/constants";
-import { date, yenCompact } from "@/lib/format";
-import { Chip, EmptyState } from "@/components/ui";
-import { ImportList } from "./import-list";
+import { countOpenCandidates } from "@/server/services/candidates";
+import { PageTitle } from "@/components/ui";
+import { DproTab } from "./dpro-tab";
+import { SbTab } from "./sb-tab";
 
-export default async function ImportsPage() {
+type Tab = "sb" | "dpro";
+const TABS: { key: Tab; label: string }[] = [
+  { key: "sb", label: "Squad beyond" },
+  { key: "dpro", label: "動画広告分析Pro" },
+];
+
+const str = (v: string | string[] | undefined): string | undefined => (typeof v === "string" && v ? v : undefined);
+
+/** 取り込み候補: Squad beyond (自社実績) and 動画広告分析Pro (市場事例) candidates, one tab each. */
+export default async function ImportsPage({ searchParams }: PageProps<"/imports">) {
   await requireUser("review_candidates");
-  const [data, cats] = await Promise.all([listDproCandidates(), listCategoriesAdmin()]);
-  const parents = cats.filter((c) => !c.parentId);
-  const categoryOptions = cats.filter((c) => c.parentId && c.isActive).map((c) => ({ id: c.id, label: `${parents.find((p) => p.id === c.parentId)?.name ?? ""} ＞ ${c.name}` }));
+  const sp = await searchParams;
+  const tab: Tab = sp.tab === "dpro" ? "dpro" : "sb";
+  const counts = await countOpenCandidates();
+  const countOf: Record<Tab, number> = { sb: counts.sb, dpro: counts.dpro };
+
   return (
-    <div className="px-4 lg:px-8 pt-7 pb-12 flex flex-col gap-5">
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="text-[28px] font-bold leading-tight">動画広告分析Proからの取り込み候補　{data.items.length}件</h1>
-          <p className="text-sm text-ink-3 mt-1.5">
-            最終取り込み：{date(data.lastFetchedAt)}（毎週月曜）　｜　承認したものだけが「市場事例」として蓄積に入ります
-          </p>
-        </div>
+    <div className="px-4 lg:px-8 pt-7 pb-12">
+      <PageTitle>取り込み候補</PageTitle>
+      <div className="flex border-b border-line-2 mb-6" role="tablist">
+        {TABS.map((t) => {
+          const active = t.key === tab;
+          return (
+            <Link
+              key={t.key}
+              href={`/imports?tab=${t.key}`}
+              role="tab"
+              aria-selected={active}
+              className={`-mb-px px-5 h-11 inline-flex items-center gap-2 text-sm border-b-2 ${active ? "border-red font-bold text-ink" : "border-transparent text-ink-3 hover:text-ink"}`}
+            >
+              {t.label}
+              {countOf[t.key] > 0 ? <span className={`text-xs px-2 py-px ${active ? "bg-red text-white" : "bg-chip text-ink-2"}`}>{countOf[t.key]}</span> : null}
+            </Link>
+          );
+        })}
       </div>
-      <div className="flex flex-wrap gap-2">
-        {data.conditions.length === 0 ? <Chip>取り込み条件は未設定です（管理画面 A-04）</Chip> : null}
-        {data.conditions.map((c, i) => (
-          <div key={i} className="contents">
-            <Chip>条件：{c.category ?? "—"}</Chip>
-            <Chip>媒体：{c.media.map(mediaLabel).join("・") || "すべて"}</Chip>
-            <Chip>推定消化額：{c.minEstSpend ? `${yenCompact(c.minEstSpend)}以上` : "下限なし"}</Chip>
-            <Chip>配信日数：{c.minDays ? `${c.minDays}日以上` : "下限なし"}</Chip>
-            <Chip>遷移先：{c.lpType === "article_only" ? "記事LPのみ" : "すべて"}</Chip>
-          </div>
-        ))}
-      </div>
-      {data.items.length === 0 ? (
-        <EmptyState title="未処理の取り込み候補はありません">DProの取り込み（第2フェーズ）またはメンバーのAIツールからの送信（方式B）で候補が追加されます。</EmptyState>
+      {tab === "sb" ? (
+        <SbTab filters={{ dismissed: sp.status === "dismissed", includeMiss: sp.includeMiss === "1", media: str(sp.media), page: str(sp.page) }} />
       ) : (
-        <ImportList items={data.items} categories={categoryOptions} />
+        <DproTab />
       )}
     </div>
   );

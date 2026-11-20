@@ -56,6 +56,7 @@ export interface CombinationDetail {
   startDate: string;
   endDate: string | null;
   metricsSource: string;
+  targetCpa: number | null;
   createdBy: { id: string; name: string };
   createdAt: string;
   category: { id: string; name: string; parentId: string | null; parentName: string | null };
@@ -208,6 +209,7 @@ export async function getCombinationDetail(id: string, opts: { includeDeleted?: 
     startDate: String(r.start_date),
     endDate: str(r.end_date),
     metricsSource: String(r.metrics_source),
+    targetCpa: num(r.target_cpa),
     createdBy: { id: String(r.created_by), name: String(r.creator_name ?? "—") },
     createdAt: String(r.created_at),
     category: { id: categoryId, name: String(r.cat_name), parentId: str(r.cat_parent), parentName: str(r.parent_name) },
@@ -303,7 +305,7 @@ export async function overrideJudge(user: CurrentUser, id: string, input: { judg
   if (row.deletedAt) throw notFound("組み合わせ");
   if (row.origin === "market") throw new ApiError("UNPROCESSABLE", "市場事例は当たり判定の対象外です");
   const now = new Date().toISOString();
-  const after = { judgeManual: input.judge, judgeManualReason: input.reason, judgeManualBy: user.id, judgeManualAt: now, updatedAt: now };
+  const after = { judgeManual: input.judge, judgeManualReason: input.reason || null, judgeManualBy: user.id, judgeManualAt: now, updatedAt: now };
   await db.batch([
     db.update(combinations).set(after).where(and(eq(combinations.id, id), eq(combinations.updatedAt, input.updatedAt))),
     auditInsert(db, { userId: user.id, action: "judge_override", targetType: "combination", targetId: id, before: { judgeManual: row.judgeManual, reason: row.judgeManualReason }, after: { judgeManual: input.judge, reason: input.reason } }),

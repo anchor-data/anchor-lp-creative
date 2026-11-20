@@ -3,19 +3,26 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { STEP_KEYS, STEP_LABEL, type StepKey } from "@/lib/domain/registration";
 import { JUDGE_LABEL, mediaLabel } from "@/lib/domain/constants";
-import type { JudgeResult } from "@/lib/domain/judge";
 import { yen } from "@/lib/format";
-import { Button } from "@/components/ui";
+import { Button, LinkButton } from "@/components/ui";
 import { api, ClientApiError, errorMessage } from "@/components/client";
 import { useToast } from "@/components/toast";
-import { emptyState, toPayload, validateStep, type FormState } from "./form-state";
-import { ArticleStep, CombinationStep, CreativeStep, ProductStep, TagsStep, type CategoryOption, type TagOption, type TagTypeOption } from "./steps";
+import { emptyState, restoreState, toPayload, validateStep, type FormState } from "./form-state";
+import { ProductStep } from "./steps/product-step";
+import { CreativeStep } from "./steps/creative-step";
+import { ArticleStep } from "./steps/article-step";
+import { CombinationStep, type JudgePreview } from "./steps/combination-step";
+import { TagsStep } from "./steps/tags-step";
+import type { CategoryOption, TagOption, TagTypeOption } from "./steps/shared";
 
 interface Prefill {
   candidateId: string; media: string; startDate: string | null; endDate: string | null; pageId: string | null;
   versionId: string; versionUrl: string | null; versionName: string | null; bodyText: string | null;
   creativeId: string; creativeName: string | null; productId: string | null; categoryId: string | null;
 }
+
+/** Section headings in the Figma frames (tabs keep STEP_LABEL). */
+const STEP_HEADING: Record<StepKey, string> = { ...STEP_LABEL, product: "商材を選ぶ" };
 
 export interface WizardProps {
   categories: CategoryOption[];
@@ -36,7 +43,7 @@ export function RegisterWizard({ categories, tagTypes, tags, candidateId, draftI
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(!initialDraftId && !candidateId);
   const [submitting, setSubmitting] = useState(false);
-  const [preview, setPreview] = useState<{ judge: JudgeResult; cpa: number | null } | null>(null);
+  const [preview, setPreview] = useState<JudgePreview | null>(null);
   const [serverErrors, setServerErrors] = useState<Record<string, string>>({});
   const dirty = useRef(false);
 
@@ -53,7 +60,7 @@ export function RegisterWizard({ categories, tagTypes, tags, candidateId, draftI
         if (initialDraftId) {
           const d = await api<{ payload: { state: FormState; step: StepKey } }>(`/api/drafts/${initialDraftId}`);
           if (!cancelled && d.payload?.state) {
-            setState({ ...emptyState(), ...d.payload.state });
+            setState(restoreState(d.payload.state));
             setStep(d.payload.step ?? "product");
           }
         } else if (candidateId) {
@@ -64,8 +71,8 @@ export function RegisterWizard({ categories, tagTypes, tags, candidateId, draftI
             sbCandidateId: p.candidateId,
             product: p.productId ? { ...s.product, mode: "existing", id: p.productId, label: "（beyondページにひも付いた商材）", categoryIdOfExisting: p.categoryId ?? "" } : { ...s.product, mode: "new", categoryId: p.categoryId ?? "" },
             creative: { ...s.creative, sbCreativeId: p.creativeId, mainCopy: s.creative.mainCopy || "" },
-            article: { ...s.article, url: p.versionUrl ?? "", bodyText: p.bodyText ?? "", title: p.versionName ?? "", sbPageId: p.pageId ?? "", sbVersionId: p.versionId },
-            combination: { ...s.combination, media: p.media, startDate: p.startDate ?? "", endDate: p.endDate ?? "", metricsSource: "sb", sbPageId: p.pageId ?? "", sbVersionId: p.versionId, sbCreativeId: p.creativeId },
+            article: { ...s.article, source: "sb", url: p.versionUrl ?? "", bodyText: p.bodyText ?? "", title: p.versionName ?? "", sbPageId: p.pageId ?? "", sbVersionId: p.versionId },
+            combination: { ...s.combination, media: p.media, startDate: p.startDate ?? "", endDate: p.endDate ?? "", metricsSource: "sb", sbCreativeId: p.creativeId },
           }));
           dirty.current = true;
         }
@@ -148,12 +155,12 @@ export function RegisterWizard({ categories, tagTypes, tags, candidateId, draftI
   const effectiveCategoryId = state.product.mode === "new" ? state.product.categoryId : state.product.categoryIdOfExisting;
   const summary: Record<StepKey, string> = {
     product: state.product.mode === "existing" ? state.product.label || "未入力" : state.product.name ? `${state.product.name}（${categoryName(state.product.categoryId) || "カテゴリ未選択"}）` : "未入力",
-    creative: state.creative.existingId ? "既存のクリエイティブを使用" : state.creative.kind ? `${state.creative.kind === "video" ? "動画" : "バナー"}${state.creative.durationSec ? ` ${Math.round(Number(state.creative.durationSec))}秒` : ""}${state.creative.script.length ? "・台本あり" : ""}` : "未入力",
+    creative: state.creative.existingId ? "既存のクリエイティブを使用" : state.creative.r2Key || state.creative.sourceUrl.trim() ? `${state.creative.kind === "video" ? "動画" : "バナー"}${state.creative.durationSec ? ` ${Math.round(Number(state.creative.durationSec))}秒` : ""}${state.creative.script.length ? "・台本あり" : ""}` : "未入力",
     article: state.article.existingId ? "既存の記事LPを使用" : state.article.url ? `${state.article.title || state.article.url}（${state.article.blocks.length}ブロック）` : "未入力",
-    combination: state.combination.media ? `${mediaLabel(state.combination.media)}${preview ? `・CPA ${yen(preview.cpa)}・${JUDGE_LABEL[state.combination.overrideOn ? state.combination.overrideJudge : preview.judge]}` : ""}` : "未入力",
+    combination: state.combination.media ? [mediaLabel(state.combination.media), preview ? `CPA ${yen(preview.cpa)}` : "", state.combination.judge ? JUDGE_LABEL[state.combination.judge] : ""].filter(Boolean).join("・") : "未入力",
     tags: state.tags.tagIds.length + state.tags.aiTagIds.length > 0 ? `タグ${new Set([...state.tags.tagIds, ...state.tags.aiTagIds]).size}件${state.tags.winMemo ? "・メモあり" : ""}` : "未入力",
   };
-  const isMiss = (state.combination.overrideOn ? state.combination.overrideJudge : preview?.judge) === "miss";
+  const isMiss = (state.combination.judge || preview?.judge) === "miss";
 
   if (!loaded) return <div className="skeleton h-96" />;
 
@@ -162,14 +169,15 @@ export function RegisterWizard({ categories, tagTypes, tags, candidateId, draftI
       <ol className="grid gap-2 grid-cols-2 md:grid-cols-5">
         {STEP_KEYS.map((k, i) => {
           const active = k === step;
-          const ok = validations[k].ok;
-          const bad = attempted.has(k) && !ok;
+          const done = visited.has(k) && validations[k].ok && !active;
+          const bad = attempted.has(k) && !validations[k].ok;
+          const tone = active ? "bg-orange-tint border-2 border-orange" : done ? "bg-canvas border border-ink" : "bg-white border border-line-2";
           return (
             <li key={k}>
-              <button type="button" onClick={() => go(k)} className={`w-full text-left px-4 py-2.5 border ${active ? "bg-orange-tint border-orange border-2" : "bg-white border-ink"} ${bad ? "!border-red" : ""}`} aria-current={active ? "step" : undefined}>
-                <span className={`block text-[11px] ${bad ? "text-red font-bold" : ""}`}>
+              <button type="button" onClick={() => go(k)} className={`w-full h-full text-left px-4 py-2.5 ${tone} ${bad ? "!border-red" : ""}`} aria-current={active ? "step" : undefined}>
+                <span className={`block text-xs ${bad ? "text-red font-bold" : ""}`}>
                   STEP {i + 1}
-                  {visited.has(k) && ok && !active ? "　✓" : ""}
+                  {done ? "　✓" : ""}
                 </span>
                 <span className="block text-[15px] font-bold">{STEP_LABEL[k]}</span>
               </button>
@@ -179,9 +187,9 @@ export function RegisterWizard({ categories, tagTypes, tags, candidateId, draftI
       </ol>
 
       <div className="flex flex-col xl:flex-row gap-5 items-start">
-        <section className="bg-white border border-line p-7 flex-1 min-w-0 w-full">
-          <h2 className="text-xl font-bold mb-5">
-            {stepIndex + 1}. {STEP_LABEL[step]}
+        <section className="bg-white border border-line px-5 py-6 md:px-7 md:py-8 flex-1 min-w-0 w-full">
+          <h2 className="text-xl font-bold mb-6">
+            {stepIndex + 1}. {STEP_HEADING[step]}
           </h2>
           {(() => {
             const errors = attempted.has(step) ? { ...validations[step].errors, ...serverErrors } : {};
@@ -195,27 +203,29 @@ export function RegisterWizard({ categories, tagTypes, tags, candidateId, draftI
               case "combination":
                 return <CombinationStep state={state} update={update} errors={errors} categoryId={effectiveCategoryId || null} onPreview={setPreview} categoryName={categoryName(effectiveCategoryId)} />;
               case "tags":
-                return <TagsStep state={state} update={update} errors={errors} tagTypes={tagTypes} tags={tags} isMiss={isMiss} />;
+                return <TagsStep state={state} update={update} errors={errors} tagTypes={tagTypes} tags={tags} isMiss={isMiss} attempted={attempted.has("tags")} />;
             }
           })()}
-          <div className="flex justify-between items-center mt-8">
-            <Button onClick={() => stepIndex > 0 && go(STEP_KEYS[stepIndex - 1])} disabled={stepIndex === 0}>
-              戻る
-            </Button>
-            <span className="text-xs text-ink-4">{savedAt ? `下書きを保存しました（${savedAt}）` : ""}</span>
+          <div className="flex justify-between items-center gap-3 mt-6 pt-4 border-t border-line-3">
+            {stepIndex === 0 ? (
+              <LinkButton href="/" className="w-32">キャンセル</LinkButton>
+            ) : (
+              <Button className="w-24" onClick={() => go(STEP_KEYS[stepIndex - 1])}>戻る</Button>
+            )}
+            <span className="text-xs text-ink-4 text-center">{savedAt ? `下書きを保存しました（${savedAt}）` : ""}</span>
             {stepIndex < STEP_KEYS.length - 1 ? (
-              <Button variant="primary" onClick={next}>
+              <Button variant="primary" className="w-24" onClick={next}>
                 次へ
               </Button>
             ) : (
-              <Button variant="primary" onClick={submit} disabled={submitting}>
+              <Button variant="primary" className="w-28" onClick={submit} disabled={submitting}>
                 {submitting ? "登録しています…" : "登録する"}
               </Button>
             )}
           </div>
         </section>
 
-        <aside className="bg-white border border-line p-5 w-full xl:w-[340px] shrink-0">
+        <aside className="bg-white border border-line p-5 w-full xl:w-[340px] shrink-0 xl:sticky xl:top-6">
           <h2 className="font-bold mb-3">登録内容</h2>
           <dl className="flex flex-col">
             {STEP_KEYS.map((k) => (

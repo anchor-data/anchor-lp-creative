@@ -9,6 +9,8 @@ interface NavItem {
   label: string;
   badge?: number;
   editorOnly?: boolean;
+  /** Shown but not clickable yet (feature not ready). */
+  disabled?: boolean;
   match: (path: string) => boolean;
 }
 
@@ -29,10 +31,8 @@ export function AppHeader({ user, pending }: AppHeaderProps) {
   const nav: NavItem[] = [
     { href: "/", label: "ギャラリー", match: (p) => p === "/" || p.startsWith("/combinations") },
     { href: "/generate", label: "生成", match: (p) => p.startsWith("/generate") },
-    { href: "/candidates", label: "登録候補", badge: pending.sb, editorOnly: true, match: (p) => p.startsWith("/candidates") },
-    { href: "/imports", label: "取り込み候補", badge: pending.dpro, editorOnly: true, match: (p) => p.startsWith("/imports") },
-    { href: "/playbooks", label: "勝ちパターン集", match: (p) => p.startsWith("/playbooks") },
-    { href: "/trends", label: "傾向分析", match: (p) => p.startsWith("/trends") },
+    { href: "/imports", label: "取り込み候補", badge: pending.sb + pending.dpro, editorOnly: true, match: (p) => p.startsWith("/imports") || p.startsWith("/candidates") },
+    { href: "/playbooks", label: "勝ちパターン集", disabled: true, match: (p) => p.startsWith("/playbooks") },
   ];
 
   const onSearch = (e: FormEvent) => {
@@ -55,6 +55,13 @@ export function AppHeader({ user, pending }: AppHeaderProps) {
             .filter((n) => !n.editorOnly || isEditor)
             .map((n) => {
               const active = n.match(path);
+              if (n.disabled) {
+                return (
+                  <button key={n.href} type="button" disabled title="準備中です" className="px-[14px] py-2.5 text-sm whitespace-nowrap text-header-muted opacity-50 cursor-not-allowed">
+                    {n.label}
+                  </button>
+                );
+              }
               return (
                 <Link
                   key={n.href}

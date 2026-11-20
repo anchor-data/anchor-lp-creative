@@ -14,6 +14,18 @@ export interface BlockRow {
   summary: string;
 }
 
+/** Read-only details of a product picked from 登録済み (STEP1 "（自動）" fields). */
+export interface ExistingProductInfo {
+  clientName: string;
+  categoryName: string;
+  target: string;
+  priceRange: string;
+  offer: string;
+  usp: string;
+}
+
+export type ManualJudge = "" | "hit" | "fair" | "miss";
+
 export interface FormState {
   sbCandidateId: string | null;
   product: {
@@ -21,6 +33,7 @@ export interface FormState {
     id: string;
     label: string; // for summary
     categoryIdOfExisting: string;
+    existingInfo: ExistingProductInfo | null;
     name: string;
     clientName: string;
     categoryId: string;
@@ -47,6 +60,7 @@ export interface FormState {
     sbCreativeId: string;
   };
   article: {
+    source: "sb" | "url";
     existingId: string;
     url: string;
     finalLpUrl: string;
@@ -61,14 +75,13 @@ export interface FormState {
     media: string;
     startDate: string;
     endDate: string;
-    metricsSource: "sb" | "manual" | "csv";
-    sbPageId: string;
-    sbVersionId: string;
+    metricsSource: "sb" | "manual";
     sbCreativeId: string;
     manual: Record<"spend" | "imp" | "click" | "pv" | "cv" | "mcv" | "fsver" | "oar", string>;
-    overrideOn: boolean;
-    overrideJudge: "hit" | "fair" | "miss";
-    overrideReason: string;
+    targetCpa: string;
+    /** 当面は手動判定で運用する。空なら自動判定（基準未設定なら判定保留）。 */
+    judge: ManualJudge;
+    judgeReason: string;
   };
   tags: { tagIds: string[]; aiTagIds: string[]; winMemo: string; nextMemo: string };
 }
@@ -76,15 +89,30 @@ export interface FormState {
 export function emptyState(): FormState {
   return {
     sbCandidateId: null,
-    product: { mode: "existing", id: "", label: "", categoryIdOfExisting: "", name: "", clientName: "", categoryId: "", targetGender: "", targetAge: "", targetPain: "", priceRange: "", offer: "", usp: "" },
-    creative: { existingId: "", kind: "", r2Key: "", fileName: "", fileSha256: "", thumbnailKey: "", sourceUrl: "", durationSec: "", width: "", height: "", mainCopy: "", script: [], sbCreativeId: "" },
-    article: { existingId: "", url: "", finalLpUrl: "", title: "", bodyText: "", blocks: [], screenshotKey: "", sbPageId: "", sbVersionId: "" },
+    product: { mode: "existing", id: "", label: "", categoryIdOfExisting: "", existingInfo: null, name: "", clientName: "", categoryId: "", targetGender: "", targetAge: "", targetPain: "", priceRange: "", offer: "", usp: "" },
+    creative: { existingId: "", kind: "video", r2Key: "", fileName: "", fileSha256: "", thumbnailKey: "", sourceUrl: "", durationSec: "", width: "", height: "", mainCopy: "", script: [], sbCreativeId: "" },
+    article: { source: "url", existingId: "", url: "", finalLpUrl: "", title: "", bodyText: "", blocks: [], screenshotKey: "", sbPageId: "", sbVersionId: "" },
     combination: {
-      media: "", startDate: "", endDate: "", metricsSource: "manual", sbPageId: "", sbVersionId: "", sbCreativeId: "",
+      media: "", startDate: "", endDate: "", metricsSource: "manual", sbCreativeId: "",
       manual: { spend: "", imp: "", click: "", pv: "", cv: "", mcv: "", fsver: "", oar: "" },
-      overrideOn: false, overrideJudge: "hit", overrideReason: "",
+      targetCpa: "", judge: "", judgeReason: "",
     },
     tags: { tagIds: [], aiTagIds: [], winMemo: "", nextMemo: "" },
+  };
+}
+
+/** Merges a saved draft over the empty state step by step, so drafts from older layouts still load. */
+export function restoreState(saved: Partial<FormState> | null | undefined): FormState {
+  const base = emptyState();
+  if (!saved) return base;
+  const combination = { ...base.combination, ...(saved.combination ?? {}) };
+  return {
+    sbCandidateId: saved.sbCandidateId ?? null,
+    product: { ...base.product, ...(saved.product ?? {}) },
+    creative: { ...base.creative, ...(saved.creative ?? {}) },
+    article: { ...base.article, ...(saved.article ?? {}), source: saved.article?.source ?? (saved.article?.sbVersionId ? "sb" : "url") },
+    combination: { ...combination, metricsSource: combination.metricsSource === "sb" ? "sb" : "manual", manual: { ...base.combination.manual, ...(saved.combination?.manual ?? {}) } },
+    tags: { ...base.tags, ...(saved.tags ?? {}) },
   };
 }
 
@@ -104,19 +132,25 @@ export function stepPayload(s: FormState, step: StepKey): unknown {
         mainCopy: opt(s.creative.mainCopy), sbCreativeId: opt(s.creative.sbCreativeId),
         script: s.creative.script.filter((r) => r.narration || r.telop || r.visual).map((r) => ({ from: Number(r.from) || 0, to: Number(r.to) || 0, narration: r.narration, telop: r.telop, visual: r.visual })),
       };
-    case "article":
+    case "article": {
+      const a = s.article;
+      const fromSb = a.source === "sb";
       return {
-        existingId: opt(s.article.existingId), url: s.article.url.trim(), finalLpUrl: s.article.finalLpUrl.trim(), title: opt(s.article.title), bodyText: opt(s.article.bodyText),
-        blocks: s.article.blocks.filter((b) => b.heading.trim()), screenshotKey: opt(s.article.screenshotKey), fvKey: opt(s.article.screenshotKey),
-        sbPageId: opt(s.article.sbPageId), sbVersionId: opt(s.article.sbVersionId),
+        existingId: opt(a.existingId), url: a.url.trim(), finalLpUrl: a.finalLpUrl.trim(), title: opt(a.title), bodyText: opt(a.bodyText),
+        blocks: a.blocks.filter((b) => b.heading.trim()), screenshotKey: opt(a.screenshotKey), fvKey: opt(a.screenshotKey),
+        sbPageId: fromSb ? opt(a.sbPageId) : undefined, sbVersionId: fromSb ? opt(a.sbVersionId) : undefined,
       };
+    }
     case "combination": {
       const c = s.combination;
+      const sb = c.metricsSource === "sb";
       return {
         media: c.media, startDate: c.startDate, endDate: c.endDate, metricsSource: c.metricsSource,
-        sbVersionId: c.metricsSource === "sb" ? opt(c.sbVersionId) : undefined, sbCreativeId: c.metricsSource === "sb" ? opt(c.sbCreativeId) : undefined,
-        manual: c.metricsSource === "manual" ? Object.fromEntries(Object.entries(c.manual).map(([k, v]) => [k, num(v)])) : undefined,
-        override: c.overrideOn ? { judge: c.overrideJudge, reason: c.overrideReason } : undefined,
+        // beyondページ・Version come from STEP3 (Figma STEP4 note).
+        sbVersionId: sb ? opt(s.article.sbVersionId) : undefined, sbCreativeId: sb ? opt(c.sbCreativeId) : undefined,
+        manual: sb ? undefined : Object.fromEntries(Object.entries(c.manual).map(([k, v]) => [k, num(v)])),
+        targetCpa: num(c.targetCpa),
+        override: c.judge ? { judge: c.judge, reason: c.judgeReason } : undefined,
       };
     }
     case "tags":

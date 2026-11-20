@@ -2,11 +2,12 @@ import { z } from "zod";
 import { handler, ok, parseJson } from "@/server/http";
 import { requireUser } from "@/server/auth";
 import { clearJudgeOverride, overrideJudge } from "@/server/services/combination-detail";
+import { judgeReasonSchema } from "@/lib/domain/registration";
 
 type Ctx = { params: Promise<{ id: string }> };
 const putSchema = z.object({
   judge: z.enum(["hit", "fair", "miss"]),
-  reason: z.string().trim().min(1, "理由を入力してください").max(500, "理由は500文字以内にしてください"),
+  reason: judgeReasonSchema,
   updatedAt: z.string(),
 });
 

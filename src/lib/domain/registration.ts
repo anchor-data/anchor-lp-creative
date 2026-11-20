@@ -71,16 +71,21 @@ export const manualMetricsSchema = z.object({
 });
 export type ManualMetricsInput = z.infer<typeof manualMetricsSchema>;
 
+/** 手動判定の理由は任意（当面は手動判定で運用するため、毎回の入力を求めない）。 */
+export const judgeReasonSchema = z.string().trim().max(500, "理由は500文字以内にしてください").default("");
+
 export const combinationStepSchema = z
   .object({
     media: z.string().min(1, "媒体を選んでください"),
     startDate: ymd,
     endDate: z.union([ymd, z.literal("")]).optional(),
-    metricsSource: z.enum(["sb", "manual", "csv"]),
+    // "csv" (S-12) is disabled until the importer exists.
+    metricsSource: z.enum(["sb", "manual"], { message: "実績の取得方法を選んでください" }),
     sbVersionId: z.string().optional(),
     sbCreativeId: z.string().optional(),
     manual: manualMetricsSchema.optional(),
-    override: z.object({ judge: z.enum(["hit", "fair", "miss"]), reason: z.string().trim().min(1, "理由を入力してください").max(500, "理由は500文字以内にしてください") }).optional(),
+    targetCpa: optInt,
+    override: z.object({ judge: z.enum(["hit", "fair", "miss"]), reason: judgeReasonSchema }).optional(),
     generationVersionId: z.string().optional(),
   })
   .refine((c) => !c.endDate || c.startDate <= c.endDate, { message: "開始日は終了日以前にしてください", path: ["startDate"] })

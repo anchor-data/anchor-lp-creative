@@ -310,7 +310,8 @@ async function sampleStatements(db: ReturnType<typeof createClient>): Promise<In
   const productIds = new Map<string, string>();
   const creativeIds = new Map<string, string>();
 
-  for (const s of SAMPLES) {
+  // 市場事例 come only from 動画広告分析Pro, which is not connected yet: seed own cases only.
+  for (const s of SAMPLES.filter((x) => x.origin === "own")) {
     const categoryId = catId.get(s.category);
     if (!categoryId) throw new Error(`unknown category ${s.category}`);
 
@@ -453,25 +454,8 @@ async function sampleStatements(db: ReturnType<typeof createClient>): Promise<In
     }
   }
 
-  // DPro candidates (Figma S-06)
+  // No DPro candidates: the 動画広告分析Pro connection is not live yet (U-10/U-11).
   const gut = catId.get("腸活");
-  const dpro = [
-    ["他社 乳酸菌サプリ", "医師が解説 腸内環境と年齢", "tiktok", 30, 3_100_000, 58, "article", ["権威・専門家", "問いかけ"]],
-    ["他社 酵素ドリンク", "朝の習慣ランキング", "meta", 15, 2_400_000, 41, "article", ["ランキング"]],
-    ["他社 青汁", "管理栄養士の1日", "youtube", 30, 1_900_000, 36, "article", ["権威・専門家"]],
-    ["他社 腸活サプリ", "商品LP", "meta", 15, 2_200_000, 30, "product", ["限定性", "価格・お得感"]],
-  ] as const;
-  const condId = ulid();
-  out.push({
-    sql: "INSERT INTO dpro_conditions (id, category_id, dpro_genre, keywords_json, media_json, min_est_spend, min_days, top_n, lp_type, updated_at) VALUES (?, ?, '健康食品', ?, ?, 1000000, 30, 20, 'article_only', ?)",
-    args: [condId, gut ?? null, JSON.stringify(["腸活", "乳酸菌"]), JSON.stringify(["meta", "tiktok", "youtube"]), now],
-  });
-  for (const [name, title, media, dur, spend, days, lpType, tags] of dpro) {
-    out.push({
-      sql: "INSERT INTO dpro_candidates (id, dpro_ad_id, condition_id, category_id, advertiser, product_name, media, ad_text, duration_sec, est_spend, delivery_days, lp_url, lp_text, lp_type, ai_tags_json, fetched_at) VALUES (?, ?, ?, ?, '[広告主名]', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-      args: [ulid(), `dpro-${ulid()}`, condId, gut ?? null, name, media, `${title}（広告文サンプル）`, dur, spend, days, "https://example.com/dpro-lp", `${title}の本文`, lpType, JSON.stringify(tags), now],
-    });
-  }
 
   // Approved playbook for 腸活 (S-07 "あわせて渡す知見")
   if (gut) {

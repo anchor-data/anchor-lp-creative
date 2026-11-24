@@ -2,13 +2,16 @@ import Link from "next/link";
 import type { CardRow } from "@/server/services/combination-list";
 import { compactNumber, pct, yen, yenCompact } from "@/lib/format";
 import { JudgeBadge, MarketJudgeBadge, MediaBadge, SourceBadge } from "./ui";
+import { DriveThumb } from "./drive-embed";
 
-function Thumb({ src, label, dashed }: { src: string | null; label: string; dashed?: boolean }) {
+function Thumb({ src, label, dashed, driveUrl }: { src: string | null; label: string; dashed?: boolean; driveUrl?: string | null }) {
   return (
     <div className={`relative flex-1 min-w-0 h-[193px] overflow-hidden ${dashed ? "bg-thumb-2 border border-dashed border-line-2" : "bg-thumb"}`}>
       {src ? (
         // eslint-disable-next-line @next/next/no-img-element -- private R2 files served via authenticated route
-        <img src={src} alt="" className="absolute inset-0 w-full h-full object-cover object-top" loading="lazy" />
+        <img src={src} alt="" className="absolute inset-0 w-full h-full object-cover object-top" loading="lazy" referrerPolicy="no-referrer" />
+      ) : driveUrl ? (
+        <DriveThumb url={driveUrl} className="absolute inset-0 w-full h-full object-cover" />
       ) : null}
       <span className="absolute left-2.5 bottom-2.5 text-xs font-bold text-ink-2 bg-white/70 px-1">{label}</span>
     </div>
@@ -30,8 +33,8 @@ export function GalleryCard({ row }: { row: CardRow }) {
   return (
     <Link href={`/combinations/${row.id}`} className="bg-white border border-line p-4 flex flex-col gap-3.5 hover:border-ink transition-colors">
       <div className="flex gap-2">
-        <Thumb src={row.thumbnailKey ? `/api/files/${row.thumbnailKey}` : null} label={kindLabel} />
-        <Thumb src={row.fvKey ? `/api/files/${row.fvKey}` : null} label="記事LP ファーストビュー" dashed />
+        <Thumb src={row.thumbnailKey ? `/api/files/${row.thumbnailKey}` : null} driveUrl={row.sourceUrl} label={kindLabel} />
+        <Thumb src={row.fvKey ? `/api/files/${row.fvKey}` : row.lpImage} label="記事LP ファーストビュー" dashed />
       </div>
       <div className="flex flex-wrap gap-1.5">
         <SourceBadge origin={row.origin} long />

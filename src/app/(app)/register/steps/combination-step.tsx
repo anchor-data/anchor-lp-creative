@@ -5,11 +5,18 @@ import { JUDGE_LABEL, MEDIA, METRIC_LABEL } from "@/lib/domain/constants";
 import type { JudgeBasis, JudgeResult, MetricBasis } from "@/lib/domain/judge";
 import { basisSummary, formatMetric, thresholdText } from "@/lib/domain/judge-text";
 import { pct, ratio, yen } from "@/lib/format";
-import { Field, Input, Select } from "@/components/ui";
+import { Button, Field, Input, Select } from "@/components/ui";
 import { api, errorMessage } from "@/components/client";
 import { useToast } from "@/components/toast";
 import type { FormState, ManualJudge } from "../form-state";
-import { SectionLabel, toNumber, Toggle, ToggleGroup, type SbOption, type StepProps } from "./shared";
+import { SectionLabel, toNumber, Toggle, ToggleGroup, type StepProps } from "./shared";
+
+interface SbCreativeOption {
+  id: string;
+  name: string;
+  spend: number | null;
+  pv: number | null;
+}
 
 export interface JudgePreview {
   judge: JudgeResult;
@@ -41,15 +48,49 @@ export function CombinationStep({ state, update, errors, categoryId, categoryNam
   const c = state.combination;
   const a = state.article;
   const toast = useToast();
-  const [creatives, setCreatives] = useState<SbOption[]>([]);
+  const [creatives, setCreatives] = useState<SbCreativeOption[]>([]);
+  const [metricsVersion, setMetricsVersion] = useState(0);
   const [basis, setBasis] = useState<JudgeBasis | null>(null);
   const set = (patch: Partial<FormState["combination"]>) => update((s) => ({ ...s, combination: { ...s.combination, ...patch } }));
   const setManual = (k: keyof FormState["combination"]["manual"], v: string) => set({ manual: { ...c.manual, [k]: v } });
 
+  const creativesKey = c.metricsSource === "sb" && a.sbPageId && a.sbVersionId ? [a.sbPageId, a.sbVersionId, c.startDate, c.endDate].join("|") : "";
+  const [loadedKey, setLoadedKey] = useState("");
+  const [refreshing, setRefreshing] = useState(false);
+  const loadingCreatives = refreshing || (creativesKey !== "" && loadedKey !== creativesKey);
+
+  const fetchCreatives = (refresh: boolean) => {
+    const q = new URLSearchParams({ versionId: a.sbVersionId });
+    if (c.startDate) q.set("from", c.startDate);
+    if (c.endDate) q.set("to", c.endDate);
+    if (refresh) q.set("refresh", "1");
+    return api<{ items: SbCreativeOption[] }>(`/api/sb/pages/${encodeURIComponent(a.sbPageId)}/creatives?${q}`).then((r) => r.items);
+  };
+  const applyCreatives = (key: string, items: SbCreativeOption[]) => {
+    setCreatives(items);
+    setLoadedKey(key);
+    setMetricsVersion((n) => n + 1);
+  };
   useEffect(() => {
-    if (c.metricsSource !== "sb" || !a.sbPageId) return;
-    api<{ items: SbOption[] }>(`/api/sb/pages/${a.sbPageId}/creatives`).then((r) => setCreatives(r.items)).catch((err) => toast.error(errorMessage(err)));
-  }, [c.metricsSource, a.sbPageId, toast]);
+    if (!creativesKey) return;
+    let live = true;
+    fetchCreatives(false)
+      .then((items) => { if (live) applyCreatives(creativesKey, items); })
+      .catch((err: unknown) => { if (live) { setLoadedKey(creativesKey); toast.error(errorMessage(err)); } });
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on page, version and period
+  }, [creativesKey]);
+  const reloadCreatives = async () => {
+    if (!creativesKey) return;
+    setRefreshing(true);
+    try {
+      applyCreatives(creativesKey, await fetchCreatives(true));
+    } catch (err) {
+      toast.error(errorMessage(err));
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   // Auto judgment (reference only while judging is manual).
   const manualKey = JSON.stringify(c.manual);
@@ -80,7 +121,7 @@ export function CombinationStep({ state, update, errors, categoryId, categoryNam
     }, 400);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- manual is tracked via manualKey
-  }, [c.metricsSource, c.startDate, c.endDate, a.sbVersionId, c.sbCreativeId, c.media, manualKey, categoryId]);
+  }, [c.metricsSource, c.startDate, c.endDate, a.sbVersionId, c.sbCreativeId, c.media, manualKey, categoryId, metricsVersion]);
 
   return (
     <div className="flex flex-col gap-5">
@@ -110,7 +151,7 @@ export function CombinationStep({ state, update, errors, categoryId, categoryNam
       </div>
 
       {c.metricsSource === "sb" ? (
-        <SbMetrics state={state} creatives={creatives} basis={basis} errors={errors} onCreative={(id) => set({ sbCreativeId: id })} />
+        <SbMetrics state={state} creatives={creatives} loading={loadingCreatives} onReload={() => void reloadCreatives()} basis={basis} errors={errors} onCreative={(id) => set({ sbCreativeId: id })} />
       ) : (
         <div className="grid gap-3 grid-cols-2 md:grid-cols-4">
           {MANUAL_FIELDS.map(([k, label, req]) => (
@@ -126,16 +167,33 @@ export function CombinationStep({ state, update, errors, categoryId, categoryNam
   );
 }
 
-function SbMetrics({ state, creatives, basis, errors, onCreative }: { state: FormState; creatives: SbOption[]; basis: JudgeBasis | null; errors: Record<string, string>; onCreative: (id: string) => void }) {
+interface SbMetricsProps {
+  state: FormState;
+  creatives: SbCreativeOption[];
+  loading: boolean;
+  onReload: () => void;
+  basis: JudgeBasis | null;
+  errors: Record<string, string>;
+  onCreative: (id: string) => void;
+}
+
+function SbMetrics({ state, creatives, loading, onReload, basis, errors, onCreative }: SbMetricsProps) {
   const c = state.combination;
   const hasPage = Boolean(state.article.sbPageId && state.article.sbVersionId);
+  const placeholder = !hasPage
+    ? "STEP3でSquad beyondのページとVersionを選んでください"
+    : loading ? "配信期間の実績を読み込んでいます…"
+      : creatives.length === 0 ? (c.startDate ? "この期間にこのVersionの配信はありません" : "配信開始日を入れると読み込みます") : "選んでください";
   return (
     <div className="flex flex-col gap-3">
-      <Field label="クリエイティブ（パラメータ）" required error={errors.sbVersionId ?? errors.sbCreativeId} hint="beyondページ・Versionは STEP3 で選んだものを使います">
-        <Select value={c.sbCreativeId} onChange={(e) => onCreative(e.target.value)} disabled={!hasPage}>
-          <option value="">{hasPage ? "選んでください" : "STEP3でSquad beyondのページとVersionを選んでください"}</option>
-          {creatives.map((cr) => <option key={cr.id} value={cr.id}>{cr.name}</option>)}
-        </Select>
+      <Field label="クリエイティブ（パラメータ）" required error={errors.sbVersionId ?? errors.sbCreativeId} hint="beyondページ・Versionは STEP3 で選んだもの。配信期間の実績をSquad beyondから読み込みます（消化額の多い順）">
+        <div className="flex gap-2">
+          <Select value={c.sbCreativeId} onChange={(e) => onCreative(e.target.value)} disabled={!hasPage || loading}>
+            <option value="">{placeholder}</option>
+            {creatives.map((cr) => <option key={cr.id} value={cr.id}>{cr.name}{cr.spend !== null ? `（消化 ${yen(cr.spend)}・PV ${cr.pv ?? 0}）` : ""}</option>)}
+          </Select>
+          <Button size="sm" onClick={onReload} disabled={!hasPage || loading || !c.startDate} title="Squad beyondから読み込み直す">更新</Button>
+        </div>
       </Field>
       {basis && basis.metrics.length > 0 ? (
         <>

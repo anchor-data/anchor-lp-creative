@@ -9,6 +9,10 @@ import { compactNumber, date, dateTime, int, pct, yen } from "@/lib/format";
 import { Card, CardTitle, Chip, JudgeBadge, LegalNote, LinkButton, MarketJudgeBadge, MediaBadge, SourceBadge, StatTile } from "@/components/ui";
 import { DetailActions, JudgeBasisLine, MemoComposer } from "./detail-client";
 import { DailyChart } from "./daily-chart";
+import { ArticleAnalyzeButton, CreativeAnalysisPanel } from "./media-panels";
+import { DriveEmbed } from "@/components/drive-embed";
+import { LpOgpCard, LpPreviewImage } from "@/components/lp-preview";
+import { driveFileId } from "@/lib/domain/drive";
 
 export default async function CombinationPage({ params, searchParams }: PageProps<"/combinations/[id]">) {
   const user = await requireUser("view");
@@ -135,32 +139,53 @@ export default async function CombinationPage({ params, searchParams }: PageProp
               )}
             </div>
           </div>
+          {d.creative.kind === "video" ? (
+            <div className="mt-5 border-t border-line-3 pt-4">
+              <p className="text-xs font-bold text-ink-3 mb-2">動画の解析（AI）</p>
+              <CreativeAnalysisPanel
+                creativeId={d.creative.id}
+                r2Key={d.creative.r2Key}
+                sourceUrl={d.creative.sourceUrl}
+                mainCopy={d.creative.mainCopy}
+                productName={d.product.name}
+                analysis={d.creative.analysis}
+                hasScript={d.creative.script.length > 0}
+                canEdit={can(user.role, "register")}
+              />
+            </div>
+          ) : null}
         </Card>
 
         <Card className="p-5">
           <CardTitle aside={d.article.screenshotKey ? <a href={`/api/files/${d.article.screenshotKey}`} target="_blank" rel="noreferrer" className="text-sm underline">全画面を見る</a> : null}>記事LP</CardTitle>
           <div className="flex flex-col sm:flex-row gap-4">
-            <div className="relative w-full sm:w-[200px] h-[356px] shrink-0 bg-thumb-2 border border-dashed border-line-2 overflow-hidden">
-              {d.article.fvKey || d.article.screenshotKey ? (
-                // eslint-disable-next-line @next/next/no-img-element -- private R2 file
-                <img src={`/api/files/${d.article.fvKey ?? d.article.screenshotKey}`} alt="記事LPのスクリーンショット" className="w-full h-full object-cover object-top" />
-              ) : null}
-              <span className="absolute left-3 bottom-3 text-xs font-bold text-ink-2">登録時のスクリーンショット</span>
+            <div className="relative w-full sm:w-[200px] h-[356px] shrink-0 border border-line">
+              <LpPreviewImage preview={d.article.preview} screenshotKey={d.article.fvKey ?? d.article.screenshotKey} className="h-full" emptyLabel="プレビューなし（「AIで記事LPを分析」で取得します）" />
+              <span className="absolute left-2 bottom-2 text-[11px] font-bold text-ink-2 bg-white/80 px-1">
+                {d.article.fvKey || d.article.screenshotKey ? "登録時のスクリーンショット" : d.article.preview?.ogImage ? "OGP画像" : "ファーストビュー（自動取得）"}
+              </span>
             </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-xs font-bold text-ink-3 mb-2">記事の構成（AIで分解）</p>
-              {d.article.blocks.length > 0 ? (
-                <ol className="flex flex-col gap-2 text-sm">
-                  {d.article.blocks.map((b, i) => (
-                    <li key={i}>
-                      {i + 1}. {blockLabel(b.type)}：{b.heading}
-                    </li>
-                  ))}
-                </ol>
-              ) : (
-                <p className="text-sm text-ink-4">構成ブロックは未登録です</p>
-              )}
-              <dl className="mt-4 text-xs flex flex-col gap-1 break-all">
+            <div className="flex-1 min-w-0 flex flex-col gap-3">
+              <LpOgpCard preview={d.article.preview} url={d.article.url} fallbackTitle={d.article.title} />
+              <div>
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                  <p className="text-xs font-bold text-ink-3">記事の構成（AIで分解）</p>
+                  {can(user.role, "register") ? <ArticleAnalyzeButton articleId={d.article.id} hasBlocks={d.article.blocks.length > 0} /> : null}
+                </div>
+                {d.article.blocks.length > 0 ? (
+                  <ol className="flex flex-col gap-2 text-sm">
+                    {d.article.blocks.map((b, i) => (
+                      <li key={i}>
+                        <span className="font-bold">{i + 1}. {blockLabel(b.type)}</span>：{b.heading}
+                        {b.summary ? <span className="block text-xs text-ink-3 mt-0.5 pl-4">{b.summary}</span> : null}
+                      </li>
+                    ))}
+                  </ol>
+                ) : (
+                  <p className="text-sm text-ink-4">構成ブロックは未登録です</p>
+                )}
+              </div>
+              <dl className="text-xs flex flex-col gap-1 break-all">
                 <div><dt className="inline text-ink-3">記事LP：</dt><dd className="inline"><a className="underline" href={d.article.url} target="_blank" rel="noreferrer noopener">{d.article.url}</a></dd></div>
                 {d.article.finalLpUrl ? <div><dt className="inline text-ink-3">最終LP：</dt><dd className="inline"><a className="underline" href={d.article.finalLpUrl} target="_blank" rel="noreferrer noopener">{d.article.finalLpUrl}</a></dd></div> : null}
               </dl>
@@ -251,7 +276,16 @@ function aspect(w: number, h: number): string {
 
 function CreativeMedia({ d }: { d: CombinationDetail }) {
   const src = d.creative.r2Key ? `/api/files/${d.creative.r2Key}` : null;
-  const box = "relative w-full sm:w-[200px] h-[356px] shrink-0 bg-ink-3 overflow-hidden flex items-center justify-center";
+  const landscape = Boolean(d.creative.width && d.creative.height && d.creative.width > d.creative.height);
+  const box = `relative w-full shrink-0 bg-ink-3 overflow-hidden flex items-center justify-center ${landscape ? "sm:w-[320px] aspect-video self-start" : "sm:w-[200px] h-[356px]"}`;
+  if (!src && driveFileId(d.creative.sourceUrl)) {
+    return (
+      <div className={`${box} flex-col`}>
+        <DriveEmbed url={d.creative.sourceUrl!} className="w-full h-full" />
+        <a href={d.creative.sourceUrl!} target="_blank" rel="noreferrer noopener" className="absolute right-1.5 top-1.5 bg-white/90 text-[11px] px-1.5 py-0.5 underline">ドライブで開く</a>
+      </div>
+    );
+  }
   if (src && d.creative.kind === "video") {
     return (
       <div className={box}>

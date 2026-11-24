@@ -7,6 +7,7 @@ import { getEnv } from "../env";
 import { ApiError, forbidden, notFound } from "../http";
 import type { CurrentUser } from "../auth";
 import { claude, extractJson, material, MATERIAL_RULE } from "./ai";
+import { logAiUsage } from "./ai-usage";
 import { latestPlaybooks, type PlaybookRef } from "./recommendations";
 import { loadNgDictionary } from "./combination-detail";
 import { checkExpressions } from "@/lib/domain/expressions";
@@ -154,6 +155,7 @@ async function decideAxes(base: string, count: number): Promise<string[]> {
     system: systemPrompt(),
     messages: [{ role: "user", content: `${base}\n\n## 指示\n商材情報・参照事例・勝ちパターン集をふまえ、互いに異なる訴求軸を${count}個提案してください。{"axes": ["…"]} だけを出力してください。` }],
   });
+  logAiUsage("generation-axes", msg);
   if (msg.stop_reason === "refusal") throw new ApiError("UPSTREAM_ERROR", "AIが訴求軸を提案できませんでした。入力内容を見直してください");
   const parsed = extractJson(msg.content.map((b) => (b.type === "text" ? b.text : "")).join("")) as { axes?: unknown };
   const axes = Array.isArray(parsed.axes) ? parsed.axes.map(String).filter(Boolean) : [];
@@ -182,6 +184,7 @@ async function streamPlan(base: string, instruction: string, onDelta: (text: str
   });
   stream.on("text", onDelta);
   const final = await stream.finalMessage();
+  logAiUsage("generation-plan", final);
   if (final.stop_reason === "refusal") throw new ApiError("UPSTREAM_ERROR", "AIがこの案を作成できませんでした");
   if (final.stop_reason === "max_tokens") throw new ApiError("UPSTREAM_ERROR", "案が長すぎて途中で切れました。もう一度お試しください");
   return {

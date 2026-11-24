@@ -3,6 +3,8 @@ import type { InStatement } from "@libsql/client";
 import { getRawClient } from "./db/client";
 import { dateChunks, pageMediaFromRaw, selectCreativeRows, type SbPage } from "./integrations/squad-beyond-mapping";
 import { SbAuthError, type SquadBeyondClient } from "./integrations/squad-beyond";
+import { htmlToText } from "@/lib/domain/files";
+import { extractLpPreview, parseLpPreview, type LpPreview } from "@/lib/domain/lp-preview";
 
 // Squad beyond → DB building blocks shared by the scheduled jobs (自社実績 sync) and the
 // step-by-step manual refresh on 取り込み候補. Every function is idempotent.
@@ -59,15 +61,28 @@ export async function upsertRankedPages(pages: readonly SbPage[]): Promise<void>
   })), "write");
 }
 
+export interface VersionContent {
+  text: string;
+  preview: LpPreview | null;
+}
+
+/** Returns the version's text and preview, fetching its HTML once (1 call) if either was never stored. */
+export async function ensureVersionContent(sb: SquadBeyondClient, versionId: string): Promise<VersionContent | null> {
+  const client = getRawClient();
+  const row = (await client.execute({ sql: "SELECT body_text, preview_json, url FROM sb_versions WHERE id = ?", args: [versionId] })).rows[0];
+  if (!row) return null;
+  const stored = parseLpPreview(row.preview_json);
+  if (row.body_text !== null && stored) return { text: String(row.body_text), preview: stored };
+  const html = await sb.getVersionHtml(versionId);
+  const text = htmlToText(html).text;
+  const preview = extractLpPreview(html, "https://app.squadbeyond.com/");
+  await client.execute({ sql: "UPDATE sb_versions SET body_text = ?, preview_json = ? WHERE id = ?", args: [text, JSON.stringify(preview), versionId] });
+  return { text, preview };
+}
+
 /** Returns the version's text, fetching its HTML once (1 call) if it was never stored. */
 export async function ensureVersionBody(sb: SquadBeyondClient, versionId: string): Promise<string | null> {
-  const client = getRawClient();
-  const row = (await client.execute({ sql: "SELECT body_text FROM sb_versions WHERE id = ?", args: [versionId] })).rows[0];
-  if (!row) return null;
-  if (row.body_text !== null) return String(row.body_text);
-  const { text } = await sb.getVersionContent(versionId);
-  await client.execute({ sql: "UPDATE sb_versions SET body_text = ? WHERE id = ?", args: [text, versionId] });
-  return text;
+  return (await ensureVersionContent(sb, versionId))?.text ?? null;
 }
 
 /** One call: the page's version list. Version HTML is fetched later, only for candidates. */

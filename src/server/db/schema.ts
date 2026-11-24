@@ -121,6 +121,7 @@ export const creatives = sqliteTable("creatives", {
   mainCopy: text("main_copy"),
   scriptJson: text("script_json"),
   sbCreativeId: text("sb_creative_id"),
+  analysisJson: text("analysis_json"),
   createdBy: text("created_by").notNull(),
   ...timestamps,
   deletedAt: text("deleted_at"),
@@ -138,6 +139,7 @@ export const articles = sqliteTable("articles", {
   blocksJson: text("blocks_json"),
   sbPageId: text("sb_page_id"),
   sbVersionId: text("sb_version_id"),
+  previewJson: text("preview_json"),
   capturedAt: text("captured_at"),
   createdBy: text("created_by").notNull(),
   ...timestamps,
@@ -253,6 +255,7 @@ export const sbVersions = sqliteTable("sb_versions", {
   name: text("name"),
   url: text("url"),
   bodyText: text("body_text"),
+  previewJson: text("preview_json"),
   rawJson: text("raw_json"),
   syncedAt: text("synced_at").notNull(),
 });

@@ -9,6 +9,8 @@ import { checkExpressions, type ExpressionHit, type NgExpression } from "@/lib/d
 import { canDelete } from "@/lib/domain/permissions";
 import { finalJudge, type JudgeBasis, type JudgeResult } from "@/lib/domain/judge";
 import type { CurrentUser } from "../auth";
+import { parseLpPreview, type LpPreview } from "@/lib/domain/lp-preview";
+import { parseVideoAnalysis, type VideoAnalysis } from "@/lib/domain/video-analysis";
 import { loadCriteria, type CategoryCriteria } from "./judging";
 
 const num = (v: unknown): number | null => (v === null || v === undefined ? null : Number(v));
@@ -61,8 +63,8 @@ export interface CombinationDetail {
   createdAt: string;
   category: { id: string; name: string; parentId: string | null; parentName: string | null };
   product: { id: string; name: string; clientName: string; targetGender: string | null; targetAge: string | null; targetPain: string | null; usp: string | null; offer: string | null };
-  creative: { id: string; kind: "video" | "banner"; durationSec: number | null; width: number | null; height: number | null; mainCopy: string | null; script: ScriptScene[]; r2Key: string | null; sourceUrl: string | null; thumbnailKey: string | null };
-  article: { id: string; url: string; finalLpUrl: string | null; title: string | null; blocks: ArticleBlock[]; screenshotKey: string | null; fvKey: string | null; bodyText: string | null };
+  creative: { id: string; kind: "video" | "banner"; durationSec: number | null; width: number | null; height: number | null; mainCopy: string | null; script: ScriptScene[]; r2Key: string | null; sourceUrl: string | null; thumbnailKey: string | null; analysis: VideoAnalysis | null };
+  article: { id: string; url: string; finalLpUrl: string | null; title: string | null; blocks: ArticleBlock[]; screenshotKey: string | null; fvKey: string | null; bodyText: string | null; preview: LpPreview | null };
   judge: JudgeResult | null;
   judgeAuto: JudgeResult | null;
   judgeManual: { value: JudgeResult; reason: string; by: string | null; at: string } | null;
@@ -90,20 +92,24 @@ async function sbTotals(versionId: string, creativeId: string, media: string): P
                  SUM(oar * pv) / NULLIF(SUM(CASE WHEN oar IS NOT NULL THEN pv END), 0) oar,
                  SUM(fver * pv) / NULLIF(SUM(CASE WHEN fver IS NOT NULL THEN pv END), 0) fver,
                  SUM(sver * pv) / NULLIF(SUM(CASE WHEN sver IS NOT NULL THEN pv END), 0) sver,
-                 SUM(ctvr * pv) / NULLIF(SUM(CASE WHEN ctvr IS NOT NULL THEN pv END), 0) ctvr
+                 SUM(ctvr * pv) / NULLIF(SUM(CASE WHEN ctvr IS NOT NULL THEN pv END), 0) ctvr,
+                 SUM(media_ctr * media_imp) / NULLIF(SUM(CASE WHEN media_ctr IS NOT NULL THEN media_imp END), 0) media_ctr
           FROM sb_metrics_daily WHERE sb_version_id = ? AND sb_creative_id = ? AND media = ?`,
     args: [versionId, creativeId, media],
   });
   const r = res.rows[0] ?? {};
   const spend = num(r.spend), cv = num(r.cv), mcv = num(r.mcv), pv = num(r.pv), click = num(r.click), imp = num(r.media_imp);
+  const mediaCtr = num(r.media_ctr);
   return {
     spend, cv, pv, click,
     cpa: cv && spend !== null ? spend / cv : null,
     mcvr: ratio(mcv, pv ?? click),
     fsver: num(r.fsver), oar: num(r.oar), fver: num(r.fver), sver: num(r.sver), ctvr: num(r.ctvr),
-    ctr: ratio(click, pv), cvr: ratio(cv, click),
+    // beyond's click is the article → LP click (MCV), so the ad CTR comes from the media columns.
+    ctr: mediaCtr, cvr: ratio(cv, click),
     mcpa: mcv && spend !== null ? spend / mcv : null,
-    mediaImp: imp, mediaCtr: ratio(click, imp), mediaCpm: imp && spend !== null ? (spend / imp) * 1000 : null, mediaCpc: click && spend !== null ? spend / click : null,
+    mediaImp: imp, mediaCtr, mediaCpm: imp && spend !== null ? (spend / imp) * 1000 : null,
+    mediaCpc: imp && mediaCtr && spend !== null ? spend / ((imp * mediaCtr) / 100) : null,
   };
 }
 
@@ -120,7 +126,8 @@ async function manualTotals(combinationId: string): Promise<Totals> {
     cpa: cv && spend !== null ? spend / cv : null,
     mcvr: ratio(mcv, pv ?? click),
     fsver: num(r.fsver), oar: num(r.oar), fver: null, sver: null, ctvr: null,
-    ctr: ratio(click, imp ?? pv), cvr: ratio(cv, click),
+    // CTR is the ad's click-through (clicks / impressions); without impressions it is unknown, not clicks / PV.
+    ctr: ratio(click, imp), cvr: ratio(cv, click),
     mcpa: mcv && spend !== null ? spend / mcv : null,
     mediaImp: imp, mediaCtr: ratio(click, imp), mediaCpm: imp && spend !== null ? (spend / imp) * 1000 : null, mediaCpc: click && spend !== null ? spend / click : null,
   };
@@ -141,8 +148,8 @@ export async function getCombinationDetail(id: string, opts: { includeDeleted?: 
   const res = await client.execute({
     sql: `SELECT c.*, p.name p_name, p.client_name, p.target_gender, p.target_age, p.target_pain, p.usp, p.offer, p.category_id,
                  cat.name cat_name, cat.parent_id cat_parent, pc.name parent_name,
-                 cr.kind, cr.duration_sec, cr.width, cr.height, cr.main_copy, cr.script_json, cr.r2_key, cr.source_url, cr.thumbnail_r2_key,
-                 a.url a_url, a.final_lp_url, a.title a_title, a.blocks_json, a.screenshot_r2_key, a.fv_r2_key, a.body_text,
+                 cr.kind, cr.duration_sec, cr.width, cr.height, cr.main_copy, cr.script_json, cr.r2_key, cr.source_url, cr.thumbnail_r2_key, cr.analysis_json,
+                 a.url a_url, a.final_lp_url, a.title a_title, a.blocks_json, a.screenshot_r2_key, a.fv_r2_key, a.body_text, a.preview_json,
                  u.name creator_name, mu.name manual_by_name
           FROM combinations c
           JOIN products p ON p.id = c.product_id
@@ -214,8 +221,8 @@ export async function getCombinationDetail(id: string, opts: { includeDeleted?: 
     createdAt: String(r.created_at),
     category: { id: categoryId, name: String(r.cat_name), parentId: str(r.cat_parent), parentName: str(r.parent_name) },
     product: { id: String(r.product_id), name: String(r.p_name), clientName: String(r.client_name), targetGender: str(r.target_gender), targetAge: str(r.target_age), targetPain: str(r.target_pain), usp: str(r.usp), offer: str(r.offer) },
-    creative: { id: String(r.creative_id), kind: r.kind as "video" | "banner", durationSec: num(r.duration_sec), width: num(r.width), height: num(r.height), mainCopy: str(r.main_copy), script, r2Key: str(r.r2_key), sourceUrl: str(r.source_url), thumbnailKey: str(r.thumbnail_r2_key) },
-    article: { id: String(r.article_id), url: String(r.a_url), finalLpUrl: str(r.final_lp_url), title: str(r.a_title), blocks, screenshotKey: str(r.screenshot_r2_key), fvKey: str(r.fv_r2_key), bodyText: str(r.body_text) },
+    creative: { id: String(r.creative_id), kind: r.kind as "video" | "banner", durationSec: num(r.duration_sec), width: num(r.width), height: num(r.height), mainCopy: str(r.main_copy), script, r2Key: str(r.r2_key), sourceUrl: str(r.source_url), thumbnailKey: str(r.thumbnail_r2_key), analysis: parseVideoAnalysis(r.analysis_json) },
+    article: { id: String(r.article_id), url: String(r.a_url), finalLpUrl: str(r.final_lp_url), title: str(r.a_title), blocks, screenshotKey: str(r.screenshot_r2_key), fvKey: str(r.fv_r2_key), bodyText: str(r.body_text), preview: parseLpPreview(r.preview_json) },
     judge: origin === "market" ? null : finalJudge(manual?.value as "hit" | "fair" | "miss" | null ?? null, judgeAuto),
     judgeAuto,
     judgeManual: manual,

@@ -64,9 +64,9 @@ export async function register(user: CurrentUser, input: RegistrationInput): Pro
     }
     creativeId = ulid();
     statements.push({
-      sql: `INSERT INTO creatives (id, product_id, kind, r2_key, source_url, file_sha256, thumbnail_r2_key, duration_sec, width, height, main_copy, script_json, sb_creative_id, created_by, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      args: [creativeId, productId, c.kind, c.r2Key ?? null, c.sourceUrl || null, c.fileSha256 ?? null, c.thumbnailKey ?? null, c.durationSec ?? null, c.width ?? null, c.height ?? null, c.mainCopy ?? null, c.script.length ? JSON.stringify(c.script) : null, c.sbCreativeId ?? input.combination.sbCreativeId ?? null, user.id, now, now],
+      sql: `INSERT INTO creatives (id, product_id, kind, r2_key, source_url, file_sha256, thumbnail_r2_key, duration_sec, width, height, main_copy, script_json, sb_creative_id, analysis_json, created_by, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      args: [creativeId, productId, c.kind, c.r2Key ?? null, c.sourceUrl || null, c.fileSha256 ?? null, c.thumbnailKey ?? null, c.durationSec ?? null, c.width ?? null, c.height ?? null, c.mainCopy ?? null, c.script.length ? JSON.stringify(c.script) : null, c.sbCreativeId ?? input.combination.sbCreativeId ?? null, c.analysis ? JSON.stringify(c.analysis) : null, user.id, now, now],
     });
     statements.push(audit("creative", creativeId, { kind: c.kind, r2Key: c.r2Key, sourceUrl: c.sourceUrl }));
   }
@@ -79,9 +79,9 @@ export async function register(user: CurrentUser, input: RegistrationInput): Pro
   } else {
     articleId = ulid();
     statements.push({
-      sql: `INSERT INTO articles (id, product_id, url, final_lp_url, title, screenshot_r2_key, fv_r2_key, body_text, blocks_json, sb_page_id, sb_version_id, captured_at, created_by, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      args: [articleId, productId, a.url, a.finalLpUrl || null, a.title ?? null, a.screenshotKey ?? null, a.fvKey ?? null, a.bodyText ?? null, JSON.stringify(a.blocks), a.sbPageId ?? null, a.sbVersionId ?? input.combination.sbVersionId ?? null, a.screenshotKey || a.bodyText ? now : null, user.id, now, now],
+      sql: `INSERT INTO articles (id, product_id, url, final_lp_url, title, screenshot_r2_key, fv_r2_key, body_text, blocks_json, sb_page_id, sb_version_id, preview_json, captured_at, created_by, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      args: [articleId, productId, a.url, a.finalLpUrl || null, a.title ?? null, a.screenshotKey ?? null, a.fvKey ?? null, a.bodyText ?? null, JSON.stringify(a.blocks), a.sbPageId ?? null, a.sbVersionId ?? input.combination.sbVersionId ?? null, a.preview ? JSON.stringify(a.preview) : null, a.screenshotKey || a.bodyText || a.preview ? now : null, user.id, now, now],
     });
     statements.push(audit("article", articleId, { url: a.url, title: a.title }));
   }
@@ -212,19 +212,4 @@ export async function findSameProduct(name: string, clientName: string): Promise
 export async function findArticleByUrl(url: string): Promise<{ id: string; title: string | null } | null> {
   const r = (await getRawClient().execute({ sql: "SELECT id, title FROM articles WHERE url = ? AND deleted_at IS NULL LIMIT 1", args: [url] })).rows[0];
   return r ? { id: String(r.id), title: r.title ? String(r.title) : null } : null;
-}
-
-export async function sbPages(): Promise<{ id: string; name: string; folder: string | null }[]> {
-  const res = await getRawClient().execute("SELECT id, name, folder FROM sb_pages ORDER BY name");
-  return res.rows.map((r) => ({ id: String(r.id), name: String(r.name ?? r.id), folder: r.folder ? String(r.folder) : null }));
-}
-
-export async function sbVersions(pageId: string): Promise<{ id: string; name: string; url: string | null; bodyText: string | null }[]> {
-  const res = await getRawClient().execute({ sql: "SELECT id, name, url, body_text FROM sb_versions WHERE page_id = ? ORDER BY name", args: [pageId] });
-  return res.rows.map((r) => ({ id: String(r.id), name: String(r.name ?? r.id), url: r.url ? String(r.url) : null, bodyText: r.body_text ? String(r.body_text) : null }));
-}
-
-export async function sbCreatives(pageId: string): Promise<{ id: string; name: string }[]> {
-  const res = await getRawClient().execute({ sql: "SELECT id, name FROM sb_creatives WHERE page_id = ? ORDER BY name", args: [pageId] });
-  return res.rows.map((r) => ({ id: String(r.id), name: String(r.name ?? r.id) }));
 }

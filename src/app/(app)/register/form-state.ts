@@ -1,5 +1,7 @@
 // Wizard form state (all strings while editing) and conversion to the API payload.
 import { STEP_SCHEMAS, type RegistrationInput, type StepKey } from "@/lib/domain/registration";
+import type { LpPreview } from "@/lib/domain/lp-preview";
+import type { VideoAnalysis } from "@/lib/domain/video-analysis";
 
 export interface ScriptRow {
   from: string;
@@ -58,6 +60,7 @@ export interface FormState {
     mainCopy: string;
     script: ScriptRow[];
     sbCreativeId: string;
+    analysis: VideoAnalysis | null;
   };
   article: {
     source: "sb" | "url";
@@ -69,7 +72,9 @@ export interface FormState {
     blocks: BlockRow[];
     screenshotKey: string;
     sbPageId: string;
+    sbPageName: string;
     sbVersionId: string;
+    preview: LpPreview | null;
   };
   combination: {
     media: string;
@@ -90,8 +95,8 @@ export function emptyState(): FormState {
   return {
     sbCandidateId: null,
     product: { mode: "existing", id: "", label: "", categoryIdOfExisting: "", existingInfo: null, name: "", clientName: "", categoryId: "", targetGender: "", targetAge: "", targetPain: "", priceRange: "", offer: "", usp: "" },
-    creative: { existingId: "", kind: "video", r2Key: "", fileName: "", fileSha256: "", thumbnailKey: "", sourceUrl: "", durationSec: "", width: "", height: "", mainCopy: "", script: [], sbCreativeId: "" },
-    article: { source: "url", existingId: "", url: "", finalLpUrl: "", title: "", bodyText: "", blocks: [], screenshotKey: "", sbPageId: "", sbVersionId: "" },
+    creative: { existingId: "", kind: "video", r2Key: "", fileName: "", fileSha256: "", thumbnailKey: "", sourceUrl: "", durationSec: "", width: "", height: "", mainCopy: "", script: [], sbCreativeId: "", analysis: null },
+    article: { source: "url", existingId: "", url: "", finalLpUrl: "", title: "", bodyText: "", blocks: [], screenshotKey: "", sbPageId: "", sbPageName: "", sbVersionId: "", preview: null },
     combination: {
       media: "", startDate: "", endDate: "", metricsSource: "manual", sbCreativeId: "",
       manual: { spend: "", imp: "", click: "", pv: "", cv: "", mcv: "", fsver: "", oar: "" },
@@ -129,7 +134,7 @@ export function stepPayload(s: FormState, step: StepKey): unknown {
       return {
         existingId: opt(s.creative.existingId), kind: s.creative.kind || undefined, r2Key: opt(s.creative.r2Key), fileSha256: opt(s.creative.fileSha256),
         thumbnailKey: opt(s.creative.thumbnailKey), sourceUrl: opt(s.creative.sourceUrl), durationSec: num(s.creative.durationSec), width: num(s.creative.width), height: num(s.creative.height),
-        mainCopy: opt(s.creative.mainCopy), sbCreativeId: opt(s.creative.sbCreativeId),
+        mainCopy: opt(s.creative.mainCopy), sbCreativeId: opt(s.creative.sbCreativeId), analysis: s.creative.analysis ?? undefined,
         script: s.creative.script.filter((r) => r.narration || r.telop || r.visual).map((r) => ({ from: Number(r.from) || 0, to: Number(r.to) || 0, narration: r.narration, telop: r.telop, visual: r.visual })),
       };
     case "article": {
@@ -139,6 +144,7 @@ export function stepPayload(s: FormState, step: StepKey): unknown {
         existingId: opt(a.existingId), url: a.url.trim(), finalLpUrl: a.finalLpUrl.trim(), title: opt(a.title), bodyText: opt(a.bodyText),
         blocks: a.blocks.filter((b) => b.heading.trim()), screenshotKey: opt(a.screenshotKey), fvKey: opt(a.screenshotKey),
         sbPageId: fromSb ? opt(a.sbPageId) : undefined, sbVersionId: fromSb ? opt(a.sbVersionId) : undefined,
+        preview: a.preview ?? undefined,
       };
     }
     case "combination": {

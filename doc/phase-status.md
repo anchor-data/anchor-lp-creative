@@ -54,7 +54,7 @@
 
 | 環境 | 状況 |
 |---|---|
-| 本番Worker | `https://anchor-lp.soumu-661.workers.dev` にデプロイ済み（Cloudflare Access 設定前のため、全画面でログインが必要と表示される） |
+| 本番Worker | `https://anchor-lp-creative.tools.anchor-ltd.tech`（独自ドメイン、Cloudflare Access の Google ログイン）。workers.dev とプレビューURLは `wrangler.jsonc` で無効（Access を通らない公開URLになるため） |
 | Turso | スキーマとマスタデータ（業種カテゴリ・タグ・判定基準の初期値）を投入済み。サンプル事例は未投入 |
 | R2 | `anchor-lp-files` 作成済み |
 | 主要モデル | 生成：`claude-sonnet-5-5`、タグ付け・構成分解：`claude-haiku-5-5`、埋め込み：Workers AI `@cf/baai/bge-m3` |

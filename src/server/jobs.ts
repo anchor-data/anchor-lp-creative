@@ -1,5 +1,4 @@
 import "server-only";
-import type { InStatement } from "@libsql/client";
 import { ulid } from "ulid";
 import { getRawClient } from "./db/client";
 import { getBindings, getEnv } from "./env";
@@ -7,36 +6,41 @@ import { addDays, jstToday } from "@/lib/format";
 import { extractCandidates, recomputeJudgments } from "./services/judging";
 import { sweepMissingEmbeddings } from "./services/embeddings";
 import { deleteFiles } from "./services/files";
-import { pageMediaFromRaw } from "./integrations/squad-beyond-mapping";
+import { syncMaster, syncOwnResults } from "./sb-sync";
 import { getSquadBeyondClient, SbAuthError, SbNotConfiguredError, type SquadBeyondClient } from "./integrations/squad-beyond";
 
 // Batch jobs (spec ch.7). Every job is idempotent and recorded in job_runs.
 export const JOBS = {
   "J-01": "Squad beyondの疎通確認",
-  "J-02": "Squad beyondのマスタ同期",
-  "J-03": "Squad beyondの日次取得（前日分）",
-  "J-04": "Squad beyondの取得漏れの補完（直近7日）",
-  "J-05": "Squad beyondの過去分の一括取り込み",
+  "J-02": "Squad beyondのマスタ同期（手動）",
+  "J-03": "自社実績の配信データ同期（直近7日）",
+  "J-05": "自社実績の過去分の一括取り込み（90日）",
   "J-07": "当たり判定の再計算",
-  "J-08": "登録候補の抽出",
+  "J-08": "登録候補の抽出（手動）",
   "J-09": "埋め込みの作成（漏れ拾い）",
   "J-10": "APIキー期限・利用量の確認",
   "J-14": "削除から30日過ぎたデータの物理削除",
   "J-15": "DBのバックアップ",
-  "J-16": "取り込み候補の手動更新",
 } as const;
 export type JobId = keyof typeof JOBS;
 
-/** JST hour → jobs (one hourly Cron Trigger dispatches everything; spec ch.7). */
+/**
+ * JST hour → jobs (one hourly Cron Trigger dispatches everything; spec ch.7).
+ * Squad beyond is synced on a schedule only for 自社実績 (J-03). 取り込み候補 (page list, all delivering
+ * pages, candidate extraction) runs only from the manual refresh, to keep API calls low.
+ */
 const SCHEDULE: Record<number, JobId[]> = {
   3: ["J-09"],
   4: ["J-14", "J-15"],
   5: ["J-01"],
-  6: ["J-02", "J-03"],
-  7: ["J-04"],
-  8: ["J-07", "J-08"],
+  6: ["J-03"],
+  7: ["J-07"],
   9: ["J-10"],
 };
+
+/** J-05 window; the API itself serves at most 30 days per call, so this is 3 calls per page. */
+const BACKFILL_DAYS = 90;
+const OWN_SYNC_DAYS = 7;
 
 export async function notify(text: string): Promise<void> {
   const url = getEnv().NOTIFY_WEBHOOK_URL;
@@ -68,7 +72,7 @@ export async function runJob(job: JobId, targetDate?: string): Promise<{ status:
     const result = await execute(job, date);
     const error = result.partialFailures?.length ? `部分失敗: ${result.partialFailures.slice(0, 20).join(", ")}` : null;
     await client.execute({ sql: "UPDATE job_runs SET status = 'succeeded', items = ?, error = ?, finished_at = ? WHERE id = ?", args: [result.items, error, new Date().toISOString(), id] });
-    if (error) await notify(`【${job} ${JOBS[job]}】一部失敗しました（対象日 ${date}）。翌朝のJ-04で補完されます。${error}`);
+    if (error) await notify(`【${job} ${JOBS[job]}】一部失敗しました（対象日 ${date}）。翌朝のJ-03で再取得されます。${error}`);
     return { status: "succeeded", items: result.items, error };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -94,22 +98,15 @@ async function execute(job: JobId, date: string): Promise<JobResult> {
     case "J-02":
       return syncMaster(getSquadBeyondClient());
     case "J-03":
-      return fetchDays(getSquadBeyondClient(), [date]);
-    case "J-04":
-      return fetchMissingDays(getSquadBeyondClient(), date);
+      return syncOwnResults(getSquadBeyondClient(), date, OWN_SYNC_DAYS);
     case "J-05":
-      return backfill(getSquadBeyondClient(), date);
+      return syncOwnResults(getSquadBeyondClient(), date, BACKFILL_DAYS);
     case "J-07": {
       const r = await recomputeJudgments();
       return { items: r.total };
     }
     case "J-08": {
       const r = await extractCandidates();
-      try {
-        await fillCandidateBodies(getSquadBeyondClient());
-      } catch (err) {
-        if (!(err instanceof SbNotConfiguredError)) throw err;
-      }
       return { items: r.upserted };
     }
     case "J-09": {
@@ -118,8 +115,6 @@ async function execute(job: JobId, date: string): Promise<JobResult> {
     }
     case "J-10":
       return checkKeysAndUsage(date);
-    case "J-16":
-      return refreshCandidates(getSquadBeyondClient(), date);
     case "J-14":
       return purgeDeleted();
     case "J-15":
@@ -129,192 +124,10 @@ async function execute(job: JobId, date: string): Promise<JobResult> {
 
 async function healthCheck(sb: SquadBeyondClient, date: string): Promise<JobResult> {
   const pages = await sb.listPages({ activeOnly: true });
-  if (pages.length === 0) return { items: 0 };
-  await sb.getBranchOperation(pages[0].id, addDays(date, -1), pages[0].media); // 前々日分を最小範囲で
+  const first = pages[0];
+  if (!first) return { items: 0 };
+  await sb.getBranchOperation(first.id, date, date, first.media); // 1日分だけの最小リクエスト
   return { items: 1 };
-}
-
-/**
- * J-02. Keeps calls low: one paginated page list, then version lists only for delivering pages that are
- * new or whose updated_at changed. Version HTML is not fetched here (see fillCandidateBodies).
- */
-async function syncMaster(sb: SquadBeyondClient): Promise<JobResult> {
-  const client = getRawClient();
-  const now = new Date().toISOString();
-  const pages = await sb.listPages({ activeOnly: false });
-  const stored = await client.execute(
-    "SELECT p.id, json_extract(p.raw_json, '$.updated_at') updated_at, EXISTS (SELECT 1 FROM sb_versions v WHERE v.page_id = p.id) has_versions FROM sb_pages p",
-  );
-  const unchanged = new Set(stored.rows.filter((r) => Number(r.has_versions) === 1).map((r) => `${r.id}|${r.updated_at ?? ""}`));
-  let statements: InStatement[] = pages.map((p) => ({
-    sql: `INSERT INTO sb_pages (id, name, folder, status, url, raw_json, synced_at) VALUES (?, ?, ?, ?, ?, ?, ?)
-          ON CONFLICT (id) DO UPDATE SET name = excluded.name, folder = excluded.folder, status = excluded.status, url = excluded.url, raw_json = excluded.raw_json, synced_at = excluded.synced_at`,
-    args: [p.id, p.name, p.folder, p.status, p.url, JSON.stringify(p.raw), now],
-  }));
-  const toSync = pages.filter((p) => p.status === "active" && !unchanged.has(`${p.id}|${pageUpdatedAt(p.raw)}`));
-  const failures: string[] = [];
-  for (const p of toSync) {
-    try {
-      const master = await sb.getPageMaster(p.id);
-      statements = [...statements, ...master.versions.map((v) => ({
-        sql: `INSERT INTO sb_versions (id, page_id, name, url, body_text, raw_json, synced_at) VALUES (?, ?, ?, ?, NULL, ?, ?)
-              ON CONFLICT (id) DO UPDATE SET name = excluded.name, url = excluded.url, raw_json = excluded.raw_json, synced_at = excluded.synced_at`,
-        args: [v.id, p.id, v.name, v.url, JSON.stringify(v.raw), now],
-      }))];
-    } catch (err) {
-      if (err instanceof SbAuthError) throw err;
-      failures.push(p.id);
-    }
-  }
-  // Raw rows are written first so a page whose versions failed is retried next run (no versions → not "unchanged").
-  if (statements.length > 0) await client.batch(statements, "write");
-  return { items: toSync.length, partialFailures: failures };
-}
-
-function pageUpdatedAt(raw: unknown): string {
-  const v = (raw as { updated_at?: unknown } | null)?.updated_at;
-  return v === undefined || v === null ? "" : String(v);
-}
-
-/** Fetches version HTML only for open candidates that lack it (used to pre-fill registration). */
-const BODY_FILL_LIMIT = 30;
-async function fillCandidateBodies(sb: SquadBeyondClient): Promise<number> {
-  const client = getRawClient();
-  const rows = await client.execute({
-    sql: `SELECT DISTINCT v.id FROM sb_candidates sc JOIN sb_versions v ON v.id = sc.sb_version_id
-          WHERE sc.status = 'open' AND v.body_text IS NULL LIMIT ?`,
-    args: [BODY_FILL_LIMIT],
-  });
-  let filled = 0;
-  for (const r of rows.rows) {
-    const id = String(r.id);
-    try {
-      const { text } = await sb.getVersionContent(id);
-      await client.execute({ sql: "UPDATE sb_versions SET body_text = ? WHERE id = ?", args: [text, id] });
-      filled++;
-    } catch (err) {
-      if (err instanceof SbAuthError || err instanceof SbNotConfiguredError) throw err;
-    }
-  }
-  return filled;
-}
-
-/**
- * Fetches "day × page" Branch Operation rows and upserts by primary key.
- * TODO: move the per-page loop onto Cloudflare Queues (spec ch.7) once page counts grow;
- * it runs inline for now and records per-page success for J-04.
- */
-async function fetchDays(sb: SquadBeyondClient, dates: readonly string[], onlyPages?: Map<string, Set<string>>): Promise<JobResult> {
-  const client = getRawClient();
-  const pages = await client.execute("SELECT id, raw_json FROM sb_pages WHERE status = 'active'");
-  const failures: string[] = [];
-  let items = 0;
-  for (const date of dates) {
-    for (const p of pages.rows) {
-      const pageId = String(p.id);
-      if (onlyPages && !onlyPages.get(date)?.has(pageId)) continue;
-      try {
-        const rows = await sb.getBranchOperation(pageId, date, pageMediaFromRaw(p.raw_json === null ? null : String(p.raw_json)));
-        const now = new Date().toISOString();
-        const statements: InStatement[] = rows.map((r) => ({
-          sql: `INSERT OR REPLACE INTO sb_metrics_daily (date, sb_version_id, sb_creative_id, media, spend, pv, click, ctr, cv, cvr, ctvr, cpa, mcv, mcvr, mcpa, fver, sver, fsver, oar, media_imp, media_ctr, media_cpm, media_cpc, raw_json, fetched_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          args: [r.date, r.versionId, r.creativeId, r.media, r.spend, r.pv, r.click, r.ctr, r.cv, r.cvr, r.ctvr, r.cpa, r.mcv, r.mcvr, r.mcpa, r.fver, r.sver, r.fsver, r.oar, r.mediaImp, r.mediaCtr, r.mediaCpm, r.mediaCpc, JSON.stringify(r.raw), now],
-        }));
-        // Squad beyond has no creative master: register each ad parameter the first time it appears.
-        const creatives = new Map(rows.map((r) => [r.creativeId, r.parameter]));
-        for (const [id, parameter] of creatives) {
-          statements.push({
-            sql: "INSERT INTO sb_creatives (id, page_id, name, parameter, raw_json, synced_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO NOTHING",
-            args: [id, pageId, parameter ?? "(パラメータなし)", parameter, JSON.stringify({ parameter }), now],
-          });
-        }
-        // Success marker per (day, page) so J-04 knows what to re-fetch.
-        statements.push({ sql: "INSERT INTO job_runs (id, job, target_date, status, items, started_at, finished_at) VALUES (?, ?, ?, 'succeeded', ?, ?, ?)", args: [ulid(), `J-03:${pageId}`, date, rows.length, now, now] });
-        await client.batch(statements, "write");
-        items += rows.length;
-      } catch (err) {
-        if (err instanceof SbAuthError) throw err;
-        failures.push(`${date}/${pageId}`);
-      }
-    }
-  }
-  return { items, partialFailures: failures };
-}
-
-async function fetchMissingDays(sb: SquadBeyondClient, date: string, days = 7): Promise<JobResult> {
-  const client = getRawClient();
-  const dates = Array.from({ length: days }, (_, i) => addDays(date, -i));
-  const pages = (await client.execute("SELECT id FROM sb_pages WHERE status = 'active'")).rows.map((r) => String(r.id));
-  const done = await client.execute({
-    sql: `SELECT job, target_date FROM job_runs WHERE job LIKE 'J-03:%' AND status = 'succeeded' AND target_date IN (${dates.map(() => "?").join(",")})`,
-    args: dates,
-  });
-  const ok = new Set(done.rows.map((r) => `${r.target_date}|${String(r.job).slice(5)}`));
-  const missing = new Map<string, Set<string>>();
-  for (const d of dates) for (const p of pages) if (!ok.has(`${d}|${p}`)) missing.set(d, (missing.get(d) ?? new Set()).add(p));
-  if (missing.size === 0) return { items: 0 };
-  return fetchDays(sb, [...missing.keys()], missing);
-}
-
-/** J-05: oldest available day (U-03; 90 days assumed) up to yesterday; resumable. */
-async function backfill(sb: SquadBeyondClient, date: string): Promise<JobResult> {
-  const dates = Array.from({ length: 90 }, (_, i) => addDays(date, -i));
-  return fetchMissingDaysFor(sb, dates);
-}
-
-async function fetchMissingDaysFor(sb: SquadBeyondClient, dates: string[]): Promise<JobResult> {
-  let items = 0;
-  const failures: string[] = [];
-  for (const d of dates) {
-    const r = await fetchMissingDays(sb, d);
-    items += r.items;
-    failures.push(...(r.partialFailures ?? []));
-  }
-  return { items, partialFailures: failures };
-}
-
-/**
- * J-16 (取り込み候補の「最新にする」). Fetches only the target day's pages not fetched yet, so after the
- * 06:00 run it costs almost no Squad beyond calls. The page list is synced only if none exists yet.
- */
-async function refreshCandidates(sb: SquadBeyondClient, date: string): Promise<JobResult> {
-  const client = getRawClient();
-  const hasPages = (await client.execute("SELECT 1 FROM sb_pages WHERE status = 'active' LIMIT 1")).rows.length > 0;
-  const master = hasPages ? null : await syncMaster(sb);
-  const fetched = await fetchMissingDays(sb, date, 1);
-  const candidates = await extractCandidates();
-  await fillCandidateBodies(sb);
-  return { items: candidates.upserted, partialFailures: [...(master?.partialFailures ?? []), ...(fetched.partialFailures ?? [])] };
-}
-
-export const SB_REFRESH_COOLDOWN_MIN = 60;
-
-export interface SbRefreshState {
-  status: "never" | "running" | "succeeded" | "failed" | "skipped";
-  startedAt: string | null;
-  finishedAt: string | null;
-  error: string | null;
-  /** When the next manual refresh is allowed (null = now). */
-  nextAllowedAt: string | null;
-}
-
-export async function getSbRefreshState(): Promise<SbRefreshState> {
-  const row = (await getRawClient().execute(
-    "SELECT status, started_at, finished_at, error FROM job_runs WHERE job = 'J-16' AND status != 'skipped' ORDER BY started_at DESC LIMIT 1",
-  )).rows[0];
-  if (!row) return { status: "never", startedAt: null, finishedAt: null, error: null, nextAllowedAt: null };
-  const startedAt = String(row.started_at);
-  const stale = Date.parse(startedAt) < Date.now() - 30 * 60_000; // runJob treats older "running" rows as dead
-  const status = row.status === "running" && stale ? "failed" : (String(row.status) as SbRefreshState["status"]);
-  const next = Date.parse(startedAt) + SB_REFRESH_COOLDOWN_MIN * 60_000;
-  return {
-    status,
-    startedAt,
-    finishedAt: row.finished_at ? String(row.finished_at) : null,
-    error: row.error ? String(row.error) : null,
-    nextAllowedAt: status !== "running" && next > Date.now() ? new Date(next).toISOString() : null,
-  };
 }
 
 async function checkKeysAndUsage(date: string): Promise<JobResult> {

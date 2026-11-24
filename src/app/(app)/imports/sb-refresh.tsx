@@ -1,65 +1,54 @@
 "use client";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
-import type { SbRefreshState } from "@/server/jobs";
-import { dateTime } from "@/lib/format";
-import { Button } from "@/components/ui";
+import { useState } from "react";
+import type { SbRefreshView } from "@/server/sb-refresh";
+import { date, dateTime } from "@/lib/format";
+import { Button, Spinner } from "@/components/ui";
 import { api, errorMessage } from "@/components/client";
 import { useToast } from "@/components/toast";
 
-const POLL_MS = 5_000;
+type Mode = "latest" | "more";
 
-function statusText(s: SbRefreshState): string {
-  if (s.status === "running") return "Squad beyondから取得中…（数分かかることがあります）";
-  if (s.status === "never") return "毎朝6時に自動で取り込みます";
-  const at = dateTime(s.finishedAt ?? s.startedAt);
-  return s.status === "failed" ? `前回の更新は失敗しました（${at}）` : `最終更新 ${at}`;
+function statusText(v: SbRefreshView, batchSize: number): string {
+  if (v.status === "never") return `「最新にする」で直近30日にPVが多いbeyondページ${batchSize}件分を取り込みます`;
+  const fails = v.failures.length > 0 ? `・取得できなかったページ ${v.failures.length}件` : "";
+  return `${date(v.rangeStart)}〜${date(v.rangeEnd)} のPV上位 ${v.loadedBatches * batchSize}件まで取り込み済み（${dateTime(v.at)}）${fails}`;
 }
 
-/** 「最新にする」: runs J-16 (yesterday's not-yet-fetched pages + candidate extraction) and polls until done. */
-export function SbRefresh({ initial }: { initial: SbRefreshState }) {
+/** 「最新にする」 reloads the top pages; 「さらに読み込む」 adds the next few. Each click is a handful of API calls. */
+export function SbRefresh({ initial, batchSize }: { initial: SbRefreshView; batchSize: number }) {
   const router = useRouter();
   const toast = useToast();
-  const [state, setState] = useState(initial);
-  const [busy, setBusy] = useState(false);
-  const running = state.status === "running";
+  const [view, setView] = useState(initial);
+  const [loading, setLoading] = useState<Mode | null>(null);
 
-  useEffect(() => {
-    if (!running) return;
-    const timer = setInterval(async () => {
-      try {
-        const next = await api<SbRefreshState>("/api/sb/refresh");
-        if (next.status === "running") return;
-        setState(next);
-        if (next.status === "failed") toast.error(next.error ?? "更新に失敗しました");
-        else toast.info("取り込み候補を更新しました");
-        router.refresh();
-      } catch {
-        /* keep polling; a transient error should not stop the indicator */
-      }
-    }, POLL_MS);
-    return () => clearInterval(timer);
-  }, [running, router, toast]);
-
-  const start = async () => {
-    setBusy(true);
+  const load = async (mode: Mode) => {
+    setLoading(mode);
     try {
-      const res = await api<{ started: boolean; state: SbRefreshState }>("/api/sb/refresh", { method: "POST", json: {} });
-      setState(res.state);
+      setView(await api<SbRefreshView>("/api/sb/refresh", { method: "POST", json: { mode } }));
+      router.refresh();
     } catch (err) {
       toast.error(errorMessage(err));
     } finally {
-      setBusy(false);
+      setLoading(null);
     }
   };
 
-  const coolingDown = Boolean(state.nextAllowedAt);
   return (
-    <div className="flex flex-wrap items-center gap-3">
-      <Button size="sm" onClick={start} disabled={busy || running || coolingDown} title={coolingDown ? `次に更新できるのは ${dateTime(state.nextAllowedAt)} 以降です` : undefined}>
-        {running ? "取得中…" : "最新にする"}
-      </Button>
-      <span className="text-xs text-ink-3" aria-live="polite">{statusText(state)}</span>
+    <div className="flex flex-col items-end gap-1.5">
+      <div className="flex items-center gap-2">
+        {view.status === "done" && view.hasMore ? (
+          <Button size="sm" variant="ghost" onClick={() => void load("more")} disabled={loading !== null} aria-busy={loading === "more"} className="gap-2">
+            {loading === "more" ? <Spinner /> : null}
+            さらに{batchSize}件読み込む
+          </Button>
+        ) : null}
+        <Button size="sm" onClick={() => void load("latest")} disabled={loading !== null} aria-busy={loading === "latest"} className="gap-2">
+          {loading === "latest" ? <Spinner /> : null}
+          {loading === "latest" ? "取得中…" : "最新にする"}
+        </Button>
+      </div>
+      <span className="text-xs text-ink-3 text-right" aria-live="polite">{statusText(view, batchSize)}</span>
     </div>
   );
 }

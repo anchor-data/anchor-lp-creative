@@ -1,29 +1,17 @@
-import { after } from "next/server";
-import { ulid } from "ulid";
-import { ApiError, handler, ok } from "@/server/http";
+import { z } from "zod";
+import { handler, ok, parseJson } from "@/server/http";
 import { requireUser } from "@/server/auth";
-import { getSbRefreshState, runJob } from "@/server/jobs";
-import { getRawClient } from "@/server/db/client";
-import { dateTime } from "@/lib/format";
+import { getRefreshView, loadBatch } from "@/server/sb-refresh";
 
-/** Current state of the manual Squad beyond refresh (J-16), polled by the 取り込み候補 page. */
+/** What has been loaded into 取り込み候補 so far. */
 export const GET = handler(async () => {
   await requireUser("review_candidates");
-  return ok(await getSbRefreshState());
+  return ok(await getRefreshView());
 });
 
-/** Starts J-16 in the background. One run per cooldown window keeps Squad beyond calls low. */
-export const POST = handler(async () => {
+/** Loads the top beyond pages ("latest") or the next few ("more") from Squad beyond. */
+export const POST = handler(async (req: Request) => {
   const user = await requireUser("review_candidates");
-  const state = await getSbRefreshState();
-  if (state.status === "running") return ok({ started: false, state });
-  if (state.nextAllowedAt) throw new ApiError("RATE_LIMITED", `次に更新できるのは ${dateTime(state.nextAllowedAt)} 以降です`);
-  await getRawClient().execute({
-    sql: "INSERT INTO audit_logs (id, at, user_id, action, target_type, target_id, after_json) VALUES (?, ?, ?, 'update', 'job', 'J-16', ?)",
-    args: [ulid(), new Date().toISOString(), user.id, JSON.stringify({ manualRun: true })],
-  });
-  after(async () => {
-    await runJob("J-16");
-  });
-  return ok({ started: true, state: { ...state, status: "running", startedAt: new Date().toISOString(), nextAllowedAt: null } }, { status: 202 });
+  const { mode } = await parseJson(req, z.object({ mode: z.enum(["latest", "more"]).default("latest") }));
+  return ok(await loadBatch(mode, user.id));
 });

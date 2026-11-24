@@ -1,13 +1,18 @@
 import { describe, expect, it } from "vitest";
 import {
   creativeId,
+  dateChunks,
+  hasMoreBatches,
   isActiveStatus,
   joinUrl,
   mapMedia,
   parseArticles,
   parseOperationRows,
   parsePagesResponse,
+  parseRankingsResponse,
   pageMediaFromRaw,
+  selectCreativeRows,
+  type SbOperationRow,
 } from "./squad-beyond-mapping";
 
 const PAGE = {
@@ -20,6 +25,18 @@ describe("joinUrl", () => {
   it("keeps the base path whether or not either side has a slash", () => {
     expect(joinUrl("https://public-api.squadbeyond.com/v1", "ab_tests")).toBe("https://public-api.squadbeyond.com/v1/ab_tests");
     expect(joinUrl("https://public-api.squadbeyond.com/v1/", "/ab_tests")).toBe("https://public-api.squadbeyond.com/v1/ab_tests");
+  });
+});
+
+describe("dateChunks", () => {
+  it("splits a period into ranges of at most 30 days, newest first", () => {
+    expect(dateChunks("2026-11-23", 7)).toEqual([["2026-11-17", "2026-11-23"]]);
+    expect(dateChunks("2026-11-23", 30)).toEqual([["2026-10-25", "2026-11-23"]]);
+    expect(dateChunks("2026-11-23", 65)).toEqual([
+      ["2026-10-25", "2026-11-23"],
+      ["2026-09-25", "2026-10-24"],
+      ["2026-09-20", "2026-09-24"],
+    ]);
   });
 });
 
@@ -53,6 +70,31 @@ describe("parsePagesResponse", () => {
 
   it("rejects a response without ab_tests", () => {
     expect(() => parsePagesResponse({ pagination: {} })).toThrow();
+  });
+});
+
+describe("parseRankingsResponse", () => {
+  it("maps ranked pages with their page views and pagination", () => {
+    const body = {
+      pagination: { total_pages: 5, total_count: 14, current_page: 1 },
+      ab_tests: [
+        { uid: "p1", title: "LP 1", ad_status: "delivered", delivery_url: "https://a", media: { name: "TikTok" }, metrics: { page_view_count: 1200 } },
+        { uid: "p2", title: "LP 2", ad_status: "undelivered", media: { name: "Meta" }, metrics: { page_view_count: 0 } },
+      ],
+    };
+    const r = parseRankingsResponse(body);
+    expect(r.totalPages).toBe(5);
+    expect(r.pages.map((p) => [p.id, p.media, p.status, p.pageViews])).toEqual([["p1", "tiktok", "active", 1200], ["p2", "meta", "inactive", 0]]);
+    expect(r.pages[0].folder).toBeNull();
+  });
+});
+
+describe("hasMoreBatches", () => {
+  it("stops at the last ranking page or once pages without views appear", () => {
+    expect(hasMoreBatches(1, 5, 3, 3)).toBe(true);
+    expect(hasMoreBatches(5, 5, 3, 3)).toBe(false);
+    expect(hasMoreBatches(2, 5, 3, 1)).toBe(false);
+    expect(hasMoreBatches(1, 1, 0, 0)).toBe(false);
   });
 });
 
@@ -95,5 +137,23 @@ describe("parseOperationRows", () => {
 
   it("rejects a response without rows", () => {
     expect(() => parseOperationRows("ab-uid-1", "2026-11-23", "meta", {})).toThrow();
+  });
+});
+
+describe("selectCreativeRows", () => {
+  const row = (parameter: string | null, spend: number | null): SbOperationRow => ({
+    date: "2026-11-23", versionId: "v1", creativeId: creativeId("p", parameter), parameter, media: "tiktok",
+    spend, pv: 10, click: 1, ctr: null, cv: 0, cvr: null, ctvr: null, cpa: null, mcv: null, mcvr: null, mcpa: null,
+    fver: null, sver: null, fsver: null, oar: null, mediaImp: null, mediaCtr: null, mediaCpm: null, mediaCpc: null, raw: {},
+  });
+
+  it("keeps only parameter keys that carry spend (utm breakdowns double-count traffic)", () => {
+    const rows = [row("snuuid=a", 500), row("snuuid=b", 0), row("utm_source=tiktok", 0), row("utm_id=1", null), row("param1=x", 20)];
+    expect(selectCreativeRows(rows).map((r) => r.parameter)).toEqual(["snuuid=a", "snuuid=b", "param1=x"]);
+  });
+
+  it("keeps every row when no key has spend (pages without ad cooperation)", () => {
+    const rows = [row("utm_source=line", 0), row(null, null)];
+    expect(selectCreativeRows(rows)).toHaveLength(2);
   });
 });

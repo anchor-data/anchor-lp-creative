@@ -3,14 +3,14 @@ import { getRawClient } from "../db/client";
 import { getEnv } from "../env";
 import { htmlToText } from "@/lib/domain/files";
 import {
-  SB_DEFAULT_BASE_URL, joinUrl, parseArticles, parseHtml, parseOperationRows, parsePagesResponse,
-  type SbCreative, type SbOperationRow, type SbPage, type SbVersion,
+  SB_DEFAULT_BASE_URL, joinUrl, parseArticles, parseHtml, parseOperationRows, parsePagesResponse, parseRankingsResponse,
+  type SbCreative, type SbOperationRow, type SbPage, type SbRankedPage, type SbVersion,
 } from "./squad-beyond-mapping";
 
 // Squad beyond public API client (spec 6-1). Endpoints and fields follow
 // https://public-api.squadbeyond.com/api-docs/v1/swagger.yaml; mapping lives in squad-beyond-mapping.ts.
 
-export type { SbCreative, SbOperationRow, SbPage, SbVersion } from "./squad-beyond-mapping";
+export type { SbCreative, SbOperationRow, SbPage, SbRankedPage, SbVersion } from "./squad-beyond-mapping";
 export { mapMedia } from "./squad-beyond-mapping";
 
 export class SbAuthError extends Error {}
@@ -19,9 +19,14 @@ export class SbNotConfiguredError extends Error {}
 
 export interface SquadBeyondClient {
   listPages(opts: { activeOnly: boolean }): Promise<SbPage[]>;
+  /** One call: pages ranked by page views over [startDate, endDate] (max 90 days), `perPage` at a time. */
+  listRankings(opts: { startDate: string; endDate: string; page: number; perPage: number }): Promise<{ pages: SbRankedPage[]; totalPages: number }>;
+  /** One call: a single page of the page list (100 per page). */
+  listPagesPage(page: number): Promise<{ pages: SbPage[]; totalPages: number }>;
   getPageMaster(pageId: string): Promise<{ versions: SbVersion[]; creatives: SbCreative[] }>;
   getVersionContent(versionId: string): Promise<{ text: string }>;
-  getBranchOperation(pageId: string, date: string, media: string): Promise<SbOperationRow[]>;
+  /** Daily rows for [startDate, endDate]; the API allows at most 30 days per call. */
+  getBranchOperation(pageId: string, startDate: string, endDate: string, media: string): Promise<SbOperationRow[]>;
 }
 
 // Our own ceilings, below Squad beyond's 120/min and 20,000/day (spec 6-1).
@@ -82,10 +87,21 @@ class HttpSquadBeyondClient implements SquadBeyondClient {
     throw lastError instanceof Error ? lastError : new Error("Squad beyond request failed");
   }
 
+  async listRankings(opts: { startDate: string; endDate: string; page: number; perPage: number }): Promise<{ pages: SbRankedPage[]; totalPages: number }> {
+    return parseRankingsResponse(await this.get<unknown>("ab_tests/rankings", {
+      sort: "page_view_count", sort_direction: "desc", start_date: opts.startDate, end_date: opts.endDate,
+      page: String(opts.page), per_page: String(opts.perPage),
+    }));
+  }
+
+  async listPagesPage(page: number): Promise<{ pages: SbPage[]; totalPages: number }> {
+    return parsePagesResponse(await this.get<unknown>("ab_tests", { page: String(page), per_page: String(PAGE_SIZE) }));
+  }
+
   async listPages(opts: { activeOnly: boolean }): Promise<SbPage[]> {
     let all: SbPage[] = [];
     for (let page = 1, totalPages = 1; page <= totalPages; page++) {
-      const r = parsePagesResponse(await this.get<unknown>("ab_tests", { page: String(page), per_page: String(PAGE_SIZE) }));
+      const r = await this.listPagesPage(page);
       all = [...all, ...r.pages];
       totalPages = r.totalPages;
     }
@@ -103,11 +119,11 @@ class HttpSquadBeyondClient implements SquadBeyondClient {
     return { text: htmlToText(html).text };
   }
 
-  async getBranchOperation(pageId: string, date: string, media: string): Promise<SbOperationRow[]> {
+  async getBranchOperation(pageId: string, startDate: string, endDate: string, media: string): Promise<SbOperationRow[]> {
     const body = await this.get<unknown>(`branch_operations/ab_tests/${encodeURIComponent(pageId)}/parameter_summary`, {
-      start_date: date, end_date: date, granularity: "daily",
+      start_date: startDate, end_date: endDate, granularity: "daily",
     });
-    return parseOperationRows(pageId, date, media, body);
+    return parseOperationRows(pageId, endDate, media, body);
   }
 }
 

@@ -25,6 +25,26 @@ export interface SbOperationRow {
   raw: unknown;
 }
 
+/** Branch Operation accepts at most this many days per request. */
+export const SB_MAX_RANGE_DAYS = 30;
+
+function shiftDays(ymd: string, days: number): string {
+  const d = new Date(`${ymd}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+/** Splits the `days` days ending at `endDate` (inclusive) into [start, end] ranges, newest first. */
+export function dateChunks(endDate: string, days: number, max = SB_MAX_RANGE_DAYS): [string, string][] {
+  const chunks: [string, string][] = [];
+  for (let offset = 0; offset < days; offset += max) {
+    const end = shiftDays(endDate, -offset);
+    const start = shiftDays(endDate, -Math.min(offset + max, days) + 1);
+    chunks.push([start, end]);
+  }
+  return chunks;
+}
+
 export function joinUrl(base: string, path: string): string {
   return `${base.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
 }
@@ -86,6 +106,34 @@ export function parsePagesResponse(body: unknown): { pages: SbPage[]; totalPages
   return { pages, totalPages: data.pagination?.total_pages ?? 1 };
 }
 
+const rankingsResponseSchema = z.object({
+  pagination: z.object({ total_pages: z.number().int().optional() }).passthrough().optional(),
+  ab_tests: z.array(pageSchema.extend({ metrics: z.object({ page_view_count: num }).passthrough().nullish() })),
+});
+
+export interface SbRankedPage extends SbPage { pageViews: number }
+
+/** /ab_tests/rankings: pages ordered by a metric over a period, with that period's totals. */
+export function parseRankingsResponse(body: unknown): { pages: SbRankedPage[]; totalPages: number } {
+  const data = rankingsResponseSchema.parse(body);
+  const pages = data.ab_tests.map((p) => ({
+    id: p.uid,
+    name: p.title ?? "",
+    folder: p.folder?.name ?? null,
+    status: isActiveStatus(p.ad_status) ? "active" : "inactive",
+    url: p.delivery_url ?? null,
+    media: mapMedia(p.media?.name ?? ""),
+    pageViews: p.metrics?.page_view_count ?? 0,
+    raw: p as unknown,
+  }));
+  return { pages, totalPages: data.pagination?.total_pages ?? 1 };
+}
+
+/** True when the ranking has another page and the batch just loaded was full of pages that still had views. */
+export function hasMoreBatches(batch: number, totalPages: number, returned: number, withViews: number): boolean {
+  return returned > 0 && withViews === returned && batch < totalPages;
+}
+
 /** Media of a page from its stored sb_pages.raw_json (the Branch Operation rows carry none). */
 export function pageMediaFromRaw(rawJson: string | null): string {
   if (!rawJson) return "other";
@@ -138,4 +186,17 @@ export function parseOperationRows(pageId: string, date: string, media: string, 
     mediaImp: r.media_imp, mediaCtr: r.media_ctr, mediaCpm: r.media_cpm, mediaCpc: r.media_cpc,
     raw: r as unknown,
   }] : []);
+}
+
+const parameterKey = (parameter: string | null): string => (parameter ?? "").split("=")[0] ?? "";
+
+/**
+ * Branch Operation breaks traffic down by every URL parameter separately, so one ad's visits appear
+ * under snuuid=…, utm_source=…, utm_medium=… and so on. Spend is attributed only to the ad-linked
+ * key, so the keys that carry spend identify creatives; the rest double-count the same traffic.
+ * Pages with no spend at all (no ad cooperation) keep every row.
+ */
+export function selectCreativeRows(rows: readonly SbOperationRow[]): SbOperationRow[] {
+  const keys = new Set(rows.filter((r) => (r.spend ?? 0) > 0).map((r) => parameterKey(r.parameter)));
+  return keys.size === 0 ? [...rows] : rows.filter((r) => keys.has(parameterKey(r.parameter)));
 }

@@ -19,6 +19,11 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   size?: keyof typeof SIZE;
 }
 
+/** Inline loading indicator; inherits the text color. */
+export function Spinner({ className = "" }: { className?: string }) {
+  return <span aria-hidden className={`inline-block w-3.5 h-3.5 border-2 border-current border-r-transparent rounded-full animate-spin motion-reduce:animate-none ${className}`} />;
+}
+
 export function Button({ variant = "secondary", size = "md", className = "", ...rest }: ButtonProps) {
   return <button type="button" className={`inline-flex items-center justify-center whitespace-nowrap disabled:cursor-not-allowed ${variant === "ghost" ? "" : SIZE[size]} ${VARIANT[variant]} ${className}`} {...rest} />;
 }

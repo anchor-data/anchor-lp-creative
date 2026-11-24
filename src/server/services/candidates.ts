@@ -31,12 +31,25 @@ export interface SbCandidate {
   totals: Record<"spend" | "cpa" | "mcvr" | "cv" | "fsver" | "oar", number | null>;
 }
 
-export async function listSbCandidates(filter: { status: "open" | "dismissed"; judge: string[]; media?: string; page?: string; includeMiss: boolean }): Promise<SbCandidate[]> {
+export const SB_CANDIDATES_PAGE_SIZE = 50;
+
+export interface SbCandidateFilter {
+  status: "open" | "dismissed";
+  /** Empty = every judgment (hit, fair, pending, miss). */
+  judge: string[];
+  media?: string;
+  page?: string;
+  limit?: number;
+}
+
+/** Every candidate matching the filter: hit → fair → pending → miss, then by spend. */
+export async function listSbCandidates(filter: SbCandidateFilter): Promise<{ items: SbCandidate[]; total: number }> {
   const clauses = ["sc.status = ?"];
   const args: InValue[] = [filter.status];
-  const judges = filter.judge.length > 0 ? filter.judge : filter.includeMiss ? ["hit", "fair", "miss"] : ["hit", "fair"];
-  clauses.push(`sc.judge IN (${judges.map(() => "?").join(",")})`);
-  args.push(...judges);
+  if (filter.judge.length > 0) {
+    clauses.push(`sc.judge IN (${filter.judge.map(() => "?").join(",")})`);
+    args.push(...filter.judge);
+  }
   if (filter.media) {
     clauses.push("sc.media = ?");
     args.push(filter.media);
@@ -45,6 +58,12 @@ export async function listSbCandidates(filter: { status: "open" | "dismissed"; j
     clauses.push("v.page_id = ?");
     args.push(filter.page);
   }
+  const where = clauses.join(" AND ");
+  const limit = Math.max(1, Math.min(filter.limit ?? SB_CANDIDATES_PAGE_SIZE, 1000));
+  const count = await getRawClient().execute({
+    sql: `SELECT COUNT(*) n FROM sb_candidates sc LEFT JOIN sb_versions v ON v.id = sc.sb_version_id WHERE ${where}`,
+    args,
+  });
   const res = await getRawClient().execute({
     sql: `SELECT sc.*, v.page_id, v.name vname, v.url vurl, sp.name pname, cr.name cname,
                  t.spend t_spend, t.cv t_cv, t.mcv t_mcv, t.base t_base, t.fsver t_fsver, t.oar t_oar
@@ -56,11 +75,12 @@ export async function listSbCandidates(filter: { status: "open" | "dismissed"; j
             FROM sb_metrics_daily GROUP BY sb_version_id, sb_creative_id, media
           ) t ON t.sb_version_id = sc.sb_version_id AND t.sb_creative_id = sc.sb_creative_id AND t.media = sc.media
           LEFT JOIN sb_pages sp ON sp.id = v.page_id LEFT JOIN sb_creatives cr ON cr.id = sc.sb_creative_id
-          WHERE ${clauses.join(" AND ")}
-          ORDER BY CASE sc.judge WHEN 'hit' THEN 0 WHEN 'fair' THEN 1 ELSE 2 END, sc.first_seen_at DESC LIMIT 200`,
-    args,
+          WHERE ${where}
+          ORDER BY CASE sc.judge WHEN 'hit' THEN 0 WHEN 'fair' THEN 1 WHEN 'pending' THEN 2 ELSE 3 END, COALESCE(t.spend, 0) DESC, sc.first_seen_at DESC
+          LIMIT ?`,
+    args: [...args, limit],
   });
-  return res.rows.map((r) => ({
+  const items = res.rows.map((r) => ({
     id: String(r.id), pageId: str(r.page_id), pageName: str(r.pname), versionName: str(r.vname), versionUrl: str(r.vurl), creativeName: str(r.cname),
     media: String(r.media), judge: r.judge as JudgeResult, basis: JSON.parse(String(r.summary_json)) as JudgeBasis, status: String(r.status),
     dismissReason: str(r.dismiss_reason), firstSeenAt: String(r.first_seen_at), categoryId: str(r.category_id),
@@ -70,12 +90,13 @@ export async function listSbCandidates(filter: { status: "open" | "dismissed"; j
       mcvr: num(r.t_base) ? ((num(r.t_mcv) ?? 0) / Number(r.t_base)) * 100 : null,
     },
   }));
+  return { items, total: Number(count.rows[0]?.n ?? 0) };
 }
 
 export async function countOpenCandidates(): Promise<{ sb: number; dpro: number }> {
   const client = getRawClient();
   const [sb, dpro] = await Promise.all([
-    client.execute("SELECT COUNT(*) n FROM sb_candidates WHERE status = 'open' AND judge IN ('hit','fair')"),
+    client.execute("SELECT COUNT(*) n FROM sb_candidates WHERE status = 'open'"),
     client.execute("SELECT COUNT(*) n FROM dpro_candidates WHERE status = 'pending'"),
   ]);
   return { sb: Number(sb.rows[0]?.n ?? 0), dpro: Number(dpro.rows[0]?.n ?? 0) };
@@ -307,4 +328,13 @@ export async function ingestDproCandidates(input: z.infer<typeof dproIngestSchem
   }
   if (statements.length > 0) await client.batch(statements, "write");
   return { inserted, updated };
+}
+
+/** beyond pages that have Squad beyond candidates, for the 取り込み候補 page filter. */
+export async function candidatePages(): Promise<{ id: string; name: string }[]> {
+  const res = await getRawClient().execute(`
+    SELECT DISTINCT sp.id, sp.name FROM sb_candidates sc
+    JOIN sb_versions v ON v.id = sc.sb_version_id JOIN sb_pages sp ON sp.id = v.page_id
+    ORDER BY sp.name`);
+  return res.rows.map((r) => ({ id: String(r.id), name: String(r.name ?? r.id) }));
 }

@@ -248,7 +248,7 @@ export async function integrationStatus(): Promise<{
   const env = getEnv();
   return {
     sb: {
-      configured: Boolean(env.SQUAD_BEYOND_API_KEY && env.SQUAD_BEYOND_BASE_URL),
+      configured: Boolean(env.SQUAD_BEYOND_API_KEY),
       keyExpiresOn: expiresOn,
       daysLeft: expiresOn ? Math.ceil((Date.parse(expiresOn) - Date.now()) / 86_400_000) : null,
       usageToday: Number(sbUsage.rows[0]?.n ?? 0),

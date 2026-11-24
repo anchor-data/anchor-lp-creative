@@ -42,7 +42,7 @@ export default async function ImportsPage({ searchParams }: PageProps<"/imports"
         })}
       </div>
       {tab === "sb" ? (
-        <SbTab filters={{ dismissed: sp.status === "dismissed", includeMiss: sp.includeMiss === "1", media: str(sp.media), page: str(sp.page) }} />
+        <SbTab filters={{ dismissed: sp.status === "dismissed", judge: str(sp.judge), media: str(sp.media), page: str(sp.page), show: str(sp.show) }} />
       ) : (
         <DproTab />
       )}

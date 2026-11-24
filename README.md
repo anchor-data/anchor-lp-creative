@@ -38,7 +38,7 @@ npm run typecheck
    npx wrangler secret put CF_ACCESS_AUD           # Access application AUD tag
    npx wrangler secret put INITIAL_ADMIN_EMAILS
    npx wrangler secret put SERVICE_TOKEN           # random string; used by the cron self-call and DPro method B
-   npx wrangler secret put SQUAD_BEYOND_BASE_URL   # once U-08 is answered
+   npx wrangler secret put SQUAD_BEYOND_BASE_URL   # optional; defaults to https://public-api.squadbeyond.com/v1
    npx wrangler secret put SQUAD_BEYOND_API_KEY
    npx wrangler secret put NOTIFY_WEBHOOK_URL      # Slack/Chatwork webhook (U-05)
    ```
@@ -65,7 +65,7 @@ src/app/(app)/         screens
 Phase 1 screens built: S-01 gallery, S-02 detail, S-04 registration wizard (autosaved drafts, live judgment, AI tags and block decomposition), S-05 Squad beyond candidates, S-06 DPro candidates, S-07 generation (recommendations, streamed set generation, partial regeneration, manual edit and versions, Markdown/PDF export, link to a delivered combination), S-08 my generations, plus A-01, A-02, A-05, A-06, A-07 and A-08.
 
 Not done yet or stubbed:
-- **Squad beyond API (U-08)**: `src/server/integrations/squad-beyond.ts` has the 4 logical calls, rate limits, retries and auth-error handling. The endpoint paths and field names are placeholders until the API document arrives
+- **Squad beyond API (U-08)**: `src/server/integrations/squad-beyond.ts` now calls the public API (`ab_tests`, `ab_tests/{uid}/articles`, `articles/{uid}/html`, `branch_operations/ab_tests/{uid}/parameter_summary`, up to 30 days per call). 取り込み候補 is filled only by the 「最新にする」 button, which loads the 3 beyond pages with the most page views in the last 30 days (via `ab_tests/rankings`), with 「さらに読み込む」 for the next 3 (`src/server/sb-refresh.ts`); version HTML is fetched only when a candidate is registered; the daily J-03 syncs the last 7 days only for pages behind registered 自社実績 (`src/server/sb-sync.ts`). Not yet verified against live data: the `ad_status` values (unknown values count as active), and the API has no MCV/MCVR, so those stay empty
 - **DPro (U-10)**: method B intake (`POST /api/dpro/candidates` with `x-service-token`) works. Method A (MCP from the server) is not built
 - **Screenshots (J-11)**: no Browser Rendering yet. Article capture extracts text only, and screenshots are uploaded by hand
 - **Large uploads**: files go through the Worker (videos capped at 95MB). Presigned multipart R2 upload for files up to 500MB is still to do

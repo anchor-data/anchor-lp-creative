@@ -28,7 +28,7 @@ export function IntegrationsAdmin({ status, runs, jobs }: Props) {
         <Card className="p-5">
           <CardTitle>Squad beyond</CardTitle>
           <dl className="text-sm grid grid-cols-[9rem_1fr] gap-y-2">
-            <dt className="text-ink-3">接続設定</dt><dd>{status.sb.configured ? "設定済み" : "未設定（Secretsに SQUAD_BEYOND_BASE_URL / SQUAD_BEYOND_API_KEY）"}</dd>
+            <dt className="text-ink-3">接続設定</dt><dd>{status.sb.configured ? "設定済み" : "未設定（Secretsに SQUAD_BEYOND_API_KEY）"}</dd>
             <dt className="text-ink-3">直近の疎通確認</dt><dd>{status.sb.lastHealth ? `${STATUS_LABEL[status.sb.lastHealth.status] ?? status.sb.lastHealth.status}（${dateTime(status.sb.lastHealth.at)}）` : "まだありません"}</dd>
             <dt className="text-ink-3">APIキーの有効期限</dt><dd className={status.sb.daysLeft !== null && status.sb.daysLeft <= 30 ? "text-red font-bold" : ""}>{status.sb.keyExpiresOn ? `${status.sb.keyExpiresOn}（残り${status.sb.daysLeft}日）` : "未登録"}</dd>
             <dt className="text-ink-3">本日の利用回数</dt><dd>{status.sb.usageToday} / 15,000</dd>

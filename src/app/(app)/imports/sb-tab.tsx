@@ -4,7 +4,9 @@ import { listSbCandidates } from "@/server/services/candidates";
 import { sbPages } from "@/server/services/registration";
 import { MEDIA } from "@/lib/domain/constants";
 import { EmptyState } from "@/components/ui";
+import { getSbRefreshState } from "@/server/jobs";
 import { CandidateRow } from "./sb-candidate-row";
+import { SbRefresh } from "./sb-refresh";
 
 export interface SbTabFilters {
   dismissed: boolean;
@@ -18,7 +20,7 @@ const PILL = "h-10 px-[14px] text-sm inline-flex items-center border";
 export async function SbTab({ filters }: { filters: SbTabFilters }) {
   const { dismissed, includeMiss, media, page } = filters;
   const status = dismissed ? "dismissed" : "open";
-  const [items, pages] = await Promise.all([listSbCandidates({ status, judge: [], includeMiss, media, page }), sbPages()]);
+  const [items, pages, refresh] = await Promise.all([listSbCandidates({ status, judge: [], includeMiss, media, page }), sbPages(), getSbRefreshState()]);
 
   const href = (patch: Record<string, string | null>) => {
     const p = new URLSearchParams({ tab: "sb" });
@@ -29,7 +31,10 @@ export async function SbTab({ filters }: { filters: SbTabFilters }) {
 
   return (
     <div className="flex flex-col gap-5">
-      <p className="text-sm text-ink-3">Squad beyondの配信実績を毎朝取り込み、当たり・まずまずで未登録の組み合わせを並べます。登録すると「自社実績」として蓄積に入ります。</p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <p className="text-sm text-ink-3 max-w-[640px]">Squad beyondの配信実績を毎朝取り込み、当たり・まずまずで未登録の組み合わせを並べます。登録すると「自社実績」として蓄積に入ります。</p>
+        <SbRefresh initial={refresh} />
+      </div>
       <div className="flex flex-wrap items-center gap-2">
         <Link href={href({ status: null })} className={`${PILL} ${!dismissed ? "bg-ink text-white border-ink" : "bg-white border-line-2"}`}>未処理　{dismissed ? "" : items.length}</Link>
         <Link href={href({ status: "dismissed" })} className={`${PILL} ${dismissed ? "bg-ink text-white border-ink" : "bg-white border-line-2"}`}>対象外にしたもの</Link>

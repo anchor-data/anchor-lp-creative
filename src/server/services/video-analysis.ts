@@ -3,6 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { getBindings, getEnv } from "../env";
 import { ApiError } from "../http";
 import { claude, extractJson, material, MATERIAL_RULE } from "./ai";
+import { logAiUsage } from "./ai-usage";
 import { videoAnalysisModelSchema, type VideoAnalysis } from "@/lib/domain/video-analysis";
 
 // F-13 動画の自動解析. The browser samples frames and records the audio track (see
@@ -103,6 +104,7 @@ export async function analyzeVideo(input: AnalyzeVideoInput): Promise<VideoAnaly
       system: SYSTEM,
       messages: [{ role: "user", content: userContent(input, transcript) }],
     });
+    logAiUsage(`video-analysis（フレーム${input.frames.length}枚${transcript ? "・文字起こしあり" : ""}）`, msg);
     if (msg.stop_reason === "refusal") throw new ApiError("UPSTREAM_ERROR", "AIが応答を返せませんでした");
     text = msg.content.map((b) => (b.type === "text" ? b.text : "")).join("");
   } catch (err) {

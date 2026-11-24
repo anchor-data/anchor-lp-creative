@@ -2,6 +2,7 @@ import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
 import { getEnv } from "../env";
 import { ApiError } from "../http";
+import { logAiUsage } from "./ai-usage";
 
 export function claude(): Anthropic {
   const key = getEnv().ANTHROPIC_API_KEY;
@@ -37,7 +38,7 @@ function textOf(message: Anthropic.Message): string {
 }
 
 /** Lightweight-model JSON call (tags, article blocks, LP-type judgment). */
-export async function lightJson(system: string, user: string, maxTokens = 4000): Promise<unknown> {
+export async function lightJson(system: string, user: string, maxTokens = 4000, label = "light"): Promise<unknown> {
   const env = getEnv();
   try {
     const msg = await claude().messages.create({
@@ -47,6 +48,7 @@ export async function lightJson(system: string, user: string, maxTokens = 4000):
       system,
       messages: [{ role: "user", content: user }],
     });
+    logAiUsage(label, msg);
     return extractJson(textOf(msg));
   } catch (err) {
     if (err instanceof ApiError) throw err;
@@ -67,6 +69,8 @@ export async function suggestTags(input: { copy?: string | null; script?: string
   const result = await lightJson(
     `あなたは広告クリエイティブの分類担当です。${MATERIAL_RULE}\n与えられた選択肢の中からだけタグを選び、JSON配列 [{"id": "...", "confidence": 0〜1}] だけを出力してください。選択肢にないタグは作らないでください。訴求軸タグは必ず1つ以上選んでください。`,
     `選択肢（id\\t種類\\t名前）:\n${list}\n\n${material("コピー", input.copy)}\n${material("台本", input.script)}\n${material("記事本文", input.body, 4000)}`,
+    4000,
+    "tags",
   );
   const valid = new Set(options.map((o) => o.id));
   if (!Array.isArray(result)) return [];
@@ -82,6 +86,8 @@ export async function decomposeArticle(body: string, blockTypes: readonly { code
   const result = await lightJson(
     `あなたは記事LPの構成を分析する担当です。${MATERIAL_RULE}\n記事を上から順に構成ブロックに分け、JSON配列 [{"type": "...", "heading": "見出し（30字以内）", "summary": "要約（80字以内）"}] だけを出力してください。typeは次のコードだけを使います: ${types}`,
     material("記事本文", body, 12000),
+    4000,
+    "article-blocks",
   );
   const allowed = new Set(blockTypes.map((b) => b.code));
   if (!Array.isArray(result)) return [];
@@ -97,6 +103,7 @@ export async function classifyLp(url: string, text: string): Promise<"article" |
     `遷移先のLPが「記事LP（記事形式で商品へ誘導）」か「商品LP直行」かを判定します。${MATERIAL_RULE}\n{"lpType": "article" | "product" | "unknown"} だけを出力してください。`,
     `URL: ${url}\n${material("LPテキスト", text, 6000)}`,
     200,
+    "lp-type",
   )) as { lpType?: string };
   return result.lpType === "article" || result.lpType === "product" ? result.lpType : "unknown";
 }

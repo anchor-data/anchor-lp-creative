@@ -5,6 +5,14 @@
   "main": "worker.ts",
   "compatibility_date": "2026-11-01",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  // Only the custom domain is behind Cloudflare Access (Google login on tools.anchor-ltd.tech).
+  // Keep workers.dev and preview URLs off, or every deploy re-opens a public URL that skips Access.
+  // The cron self-call uses the WORKER_SELF_REFERENCE service binding, not workers.dev.
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [
+    { "pattern": "anchor-lp-creative.tools.anchor-ltd.tech", "custom_domain": true }
+  ],
   "assets": {
     "directory": ".open-next/assets",
     "binding": "ASSETS"
@@ -30,6 +38,9 @@
   "env": {
     "staging": {
       "name": "anchor-lp-staging",
+      // No public URL until staging gets its own Access-protected domain.
+      "workers_dev": false,
+      "preview_urls": false,
       "services": [
         { "binding": "WORKER_SELF_REFERENCE", "service": "anchor-lp-staging" }
       ],

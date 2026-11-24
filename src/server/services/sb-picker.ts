@@ -2,8 +2,8 @@ import "server-only";
 import { getRawClient } from "../db/client";
 import { ApiError, notFound } from "../http";
 import { getSquadBeyondClient, SbNotConfiguredError, type SquadBeyondClient } from "../integrations/squad-beyond";
-import { pageMediaFromRaw, sbVersionUrl } from "../integrations/squad-beyond-mapping";
-import { ensureVersionContent, fetchPageRange, syncPageVersions } from "../sb-sync";
+import { combineVersionTotals, isSbResolvableUrl, pageMediaFromRaw, parseSbUrl, sbVersionIdFromUrl, sbVersionUrl, type SbVersionTotals } from "../integrations/squad-beyond-mapping";
+import { ensureVersionContent, fetchPageRange, syncPageVersions, upsertRankedPages } from "../sb-sync";
 import { friendlyError } from "../sb-refresh";
 import { addDays, jstToday } from "@/lib/format";
 import type { LpPreview } from "@/lib/domain/lp-preview";
@@ -152,4 +152,97 @@ export async function searchSbPages(q: string, limit = 50): Promise<{ id: string
     args: [like, like, like, like, q.trim(), limit],
   });
   return res.rows.map((r) => ({ id: String(r.id), name: String(r.name ?? r.id), folder: r.folder ? String(r.folder) : null, status: r.status ? String(r.status) : null }));
+}
+
+// --- Matching an article entered by URL / name to Squad beyond (手入力の登録でも実績を引けるように) ---
+
+export interface SbMatch {
+  pageId: string;
+  pageName: string;
+  versionId: string | null;
+  versionName: string | null;
+  /** "url": resolved from the article URL (reliable); "name": title / product name similarity (needs a human pick). */
+  matchedBy: "url" | "name";
+}
+
+export interface SbResolveInput {
+  url?: string;
+  title?: string;
+  productName?: string;
+}
+
+async function pageName(pageId: string): Promise<string> {
+  const row = (await getRawClient().execute({ sql: "SELECT name FROM sb_pages WHERE id = ?", args: [pageId] })).rows[0];
+  return row?.name ? String(row.name) : pageId;
+}
+
+async function urlMatch(url: string): Promise<SbMatch | null> {
+  const fromConsole = parseSbUrl(url);
+  let pageId = fromConsole?.pageId ?? null;
+  const versionId = fromConsole?.versionId ?? sbVersionIdFromUrl(url);
+  if (!pageId && isSbResolvableUrl(url)) {
+    // A 404 or an empty body just means "not a Squad beyond URL we know".
+    const page = await withSb((sb) => sb.searchPageByUrl(url)).catch(() => null);
+    if (page) {
+      await upsertRankedPages([page]);
+      pageId = page.id;
+    }
+  }
+  if (!pageId) return null;
+  const versions = await pickerVersions(pageId).catch(() => [] as PickerVersion[]);
+  const version = versionId ? versions.find((v) => v.id === versionId) ?? null : null;
+  return { pageId, pageName: await pageName(pageId), versionId: version?.id ?? null, versionName: version?.name ?? null, matchedBy: "url" };
+}
+
+/** Stored Versions / pages whose names contain the article title or product name (pages loaded by the syncs only). */
+async function nameCandidates(title: string, productName: string, limit = 5): Promise<SbMatch[]> {
+  const terms = [title, productName].map((t) => t.trim()).filter((t) => t.length >= 2);
+  if (terms.length === 0) return [];
+  const client = getRawClient();
+  const out: SbMatch[] = [];
+  for (const term of terms) {
+    const like = `%${term}%`;
+    const versions = await client.execute({
+      sql: `SELECT v.id vid, v.name vname, p.id pid, p.name pname FROM sb_versions v JOIN sb_pages p ON p.id = v.page_id
+            WHERE v.name = ? OR v.name LIKE ? ORDER BY v.name = ? DESC, v.synced_at DESC LIMIT ?`,
+      args: [term, like, term, limit],
+    });
+    for (const r of versions.rows) out.push({ pageId: String(r.pid), pageName: String(r.pname ?? r.pid), versionId: String(r.vid), versionName: String(r.vname ?? r.vid), matchedBy: "name" });
+    const pages = await client.execute({ sql: "SELECT id, name FROM sb_pages WHERE name LIKE ? OR folder LIKE ? ORDER BY status = 'active' DESC, name LIMIT ?", args: [like, like, limit] });
+    for (const r of pages.rows) out.push({ pageId: String(r.id), pageName: String(r.name ?? r.id), versionId: null, versionName: null, matchedBy: "name" });
+  }
+  const seen = new Set<string>();
+  return out.filter((m) => {
+    const key = `${m.pageId}|${m.versionId ?? ""}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).slice(0, limit);
+}
+
+/** The beyond page / Version an article belongs to: from its URL first, then name candidates. */
+export async function resolveSbArticle(input: SbResolveInput): Promise<{ match: SbMatch | null; candidates: SbMatch[] }> {
+  const match = input.url ? await urlMatch(input.url) : null;
+  if (match) return { match, candidates: [] };
+  return { match: null, candidates: await nameCandidates(input.title ?? "", input.productName ?? "") };
+}
+
+/** Version-level totals for a delivery period (1 call per 30 days), the numbers the 事例一括登録シート uses. */
+export async function pickerVersionTotals(versionId: string, from: string, to: string | null): Promise<SbVersionTotals & { start: string; end: string }> {
+  const row = (await getRawClient().execute({ sql: "SELECT page_id FROM sb_versions WHERE id = ?", args: [versionId] })).rows[0];
+  if (!row) throw notFound("Version");
+  const window = pickerWindow(from, to);
+  if (!window) throw new ApiError("VALIDATION_ERROR", "配信開始日が未来の日付です");
+  const pageId = String(row.page_id);
+  const parts = await withSb(async (sb) => {
+    const out: Omit<SbVersionTotals, "days">[] = [];
+    for (let offset = 0; offset < window.days; offset += 30) {
+      const end = addDays(window.end, -offset);
+      const start = addDays(window.end, -Math.min(offset + 30, window.days) + 1);
+      const part = await sb.getVersionTotals(pageId, versionId, start, end);
+      if (part) out.push(part);
+    }
+    return out;
+  });
+  return { ...combineVersionTotals(parts, window.days), start: window.start, end: window.end };
 }

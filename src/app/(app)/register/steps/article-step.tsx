@@ -5,6 +5,7 @@ import { ARTICLE_BLOCK_TYPES, blockLabel } from "@/lib/domain/constants";
 import { Button, Field, Input, Select, Textarea } from "@/components/ui";
 import { api, errorMessage } from "@/components/client";
 import { useToast } from "@/components/toast";
+import { useConfirm } from "@/components/confirm";
 import type { BlockRow, FormState } from "../form-state";
 import type { LpPreview } from "@/lib/domain/lp-preview";
 import { LpOgpCard, LpPreviewImage } from "@/components/lp-preview";
@@ -213,6 +214,7 @@ function SbSource({ state, set, onBody, errors }: SourceProps) {
 function UrlSource({ state, set, onBody, errors }: SourceProps) {
   const a = state.article;
   const toast = useToast();
+  const confirm = useConfirm();
   const [capturing, setCapturing] = useState(false);
   const lastCaptured = useRef("");
 
@@ -223,7 +225,7 @@ function UrlSource({ state, set, onBody, errors }: SourceProps) {
     setCapturing(true);
     try {
       const res = await api<CaptureResult>("/api/articles/capture", { method: "POST", json: { url } });
-      if (res.existing && window.confirm(`同じURLの記事LP「${res.existing.title ?? ""}」が登録済みです。既存の記事LPを使いますか？`)) {
+      if (res.existing && await confirm({ title: "既存の記事LPを使いますか？", message: `同じURLの記事LP「${res.existing.title ?? ""}」が登録済みです。`, confirmLabel: "既存の記事LPを使う", cancelLabel: "新しく登録する" })) {
         set({ existingId: res.existing.id, title: res.existing.title ?? "" });
         return;
       }

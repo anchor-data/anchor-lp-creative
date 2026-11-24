@@ -63,7 +63,6 @@ export default async function CombinationPage({ params, searchParams }: PageProp
           id={d.id}
           updatedAt={d.updatedAt}
           origin={d.origin}
-          hasManual={Boolean(d.judgeManual)}
           canOverride={can(user.role, "judge_override")}
           canDelete={canDelete(user.role, user.id, d.createdBy.id)}
         />

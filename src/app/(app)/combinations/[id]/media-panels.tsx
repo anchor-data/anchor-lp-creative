@@ -5,8 +5,11 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui";
 import { api, errorMessage } from "@/components/client";
 import { useToast } from "@/components/toast";
+import { useConfirm } from "@/components/confirm";
 import { VideoAnalysisView, VideoAnalyzer, type AnalyzedVideo } from "@/components/video-analysis/analyzer";
 import type { VideoAnalysis } from "@/lib/domain/video-analysis";
+
+export const REPLACE_SCRIPT = { title: "台本をAIの解析結果で置き換えますか？", message: "「置き換えない」を選ぶと、今の台本はそのまま残り、解析結果だけを保存します。", confirmLabel: "置き換える", cancelLabel: "置き換えない" };
 
 interface CreativeAnalysisPanelProps {
   creativeId: string;
@@ -21,8 +24,9 @@ interface CreativeAnalysisPanelProps {
 
 export function CreativeAnalysisPanel({ creativeId, r2Key, sourceUrl, mainCopy, productName, analysis, hasScript, canEdit }: CreativeAnalysisPanelProps) {
   const router = useRouter();
+  const confirm = useConfirm();
   const save = async ({ analysis: next, thumbnailKey, width, height }: AnalyzedVideo) => {
-    const applyScript = next.scenes.length > 0 && (!hasScript || window.confirm("AIの解析結果で台本を置き換えますか？（キャンセルすると今の台本を残します）"));
+    const applyScript = next.scenes.length > 0 && (!hasScript || await confirm(REPLACE_SCRIPT));
     await api(`/api/creatives/${creativeId}/analysis`, {
       method: "PUT",
       json: { analysis: next, applyScript, thumbnailKey: thumbnailKey ?? undefined, width: width || undefined, height: height || undefined },

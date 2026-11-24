@@ -7,6 +7,7 @@ import { yen } from "@/lib/format";
 import { Button, LinkButton } from "@/components/ui";
 import { api, ClientApiError, errorMessage } from "@/components/client";
 import { useToast } from "@/components/toast";
+import { useConfirm } from "@/components/confirm";
 import { emptyState, restoreState, toPayload, validateStep, type FormState } from "./form-state";
 import { ProductStep } from "./steps/product-step";
 import { CreativeStep } from "./steps/creative-step";
@@ -35,6 +36,7 @@ export interface WizardProps {
 export function RegisterWizard({ categories, tagTypes, tags, candidateId, draftId: initialDraftId }: WizardProps) {
   const router = useRouter();
   const toast = useToast();
+  const confirm = useConfirm();
   const [state, setState] = useState<FormState>(emptyState);
   const [step, setStep] = useState<StepKey>("product");
   const [visited, setVisited] = useState<Set<StepKey>>(new Set(["product"]));
@@ -140,7 +142,7 @@ export function RegisterWizard({ categories, tagTypes, tags, candidateId, draftI
       if (err instanceof ClientApiError) {
         setServerErrors(err.fieldErrors());
         const dup = err.body.details?.find((d) => d.reason === "duplicate_file");
-        if (dup && typeof dup.existingId === "string" && window.confirm(`${err.message}\n既存のクリエイティブを使いますか？`)) {
+        if (dup && typeof dup.existingId === "string" && await confirm({ title: "既存のクリエイティブを使いますか？", message: err.message, confirmLabel: "既存を使う" })) {
           update((s) => ({ ...s, creative: { ...s.creative, existingId: dup.existingId as string } }));
           setSubmitting(false);
           return;

@@ -7,6 +7,7 @@ import { METRIC_LABEL } from "@/lib/domain/constants";
 import { Button, Field, LinkButton, Select, Textarea } from "@/components/ui";
 import { api, errorMessage } from "@/components/client";
 import { useToast } from "@/components/toast";
+import { useConfirm } from "@/components/confirm";
 
 export function JudgeBasisLine({ basis }: { basis: JudgeBasis | null }) {
   const [open, setOpen] = useState(false);
@@ -50,9 +51,10 @@ export function JudgeBasisLine({ basis }: { basis: JudgeBasis | null }) {
   );
 }
 
-export function DetailActions(props: { id: string; updatedAt: string; origin: "own" | "market"; hasManual: boolean; canOverride: boolean; canDelete: boolean }) {
+export function DetailActions(props: { id: string; updatedAt: string; origin: "own" | "market"; canOverride: boolean; canDelete: boolean }) {
   const router = useRouter();
   const toast = useToast();
+  const confirm = useConfirm();
   const [overriding, setOverriding] = useState(false);
   const [judge, setJudge] = useState<"hit" | "fair" | "miss">("hit");
   const [reason, setReason] = useState("");
@@ -77,22 +79,30 @@ export function DetailActions(props: { id: string; updatedAt: string; origin: "o
     <div className="flex flex-col items-end gap-3">
       <div className="flex flex-wrap gap-2.5 justify-end">
         {props.canOverride && props.origin === "own" ? (
-          props.hasManual ? (
-            <Button disabled={busy} onClick={() => run(() => api(`/api/combinations/${props.id}/judge-override?updatedAt=${encodeURIComponent(props.updatedAt)}`, { method: "DELETE" }), "自動判定に戻しました")}>
-              自動判定に戻す
-            </Button>
-          ) : (
-            <Button className="hidden md:inline-flex" onClick={() => setOverriding((o) => !o)}>判定を手動で変える</Button>
-          )
+          <Button className="hidden md:inline-flex" onClick={() => setOverriding((o) => !o)}>判定を手動で変える</Button>
         ) : null}
         {props.canDelete ? (
           <Button
             className="hidden md:inline-flex"
             disabled={busy}
             onClick={async () => {
-              if (!window.confirm("この組み合わせを削除しますか？（30日間は復元できます）")) return;
-              const okDone = await run(() => api(`/api/combinations/${props.id}`, { method: "DELETE" }), "削除しました");
-              if (okDone) router.push("/");
+              const ok = await confirm({
+                title: "この組み合わせを削除しますか？",
+                message: "ギャラリーと検索に表示されなくなります。削除から30日間は復元できます。",
+                confirmLabel: "削除する",
+                danger: true,
+              });
+              if (!ok) return;
+              setBusy(true);
+              try {
+                await api(`/api/combinations/${props.id}`, { method: "DELETE" });
+                toast.info("削除しました（30日間は復元できます）");
+                // Leave the page without refreshing it first: the deleted record would render as 404.
+                router.replace("/");
+              } catch (err) {
+                toast.error(errorMessage(err));
+                setBusy(false);
+              }
             }}
           >
             削除

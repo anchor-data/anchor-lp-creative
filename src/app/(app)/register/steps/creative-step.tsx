@@ -4,6 +4,7 @@ import { useRef, useState, type DragEvent } from "react";
 import { Button, Field, Input } from "@/components/ui";
 import { errorMessage } from "@/components/client";
 import { useToast } from "@/components/toast";
+import { useConfirm } from "@/components/confirm";
 import type { FormState, ScriptRow } from "../form-state";
 import { DriveEmbed } from "@/components/drive-embed";
 import { VideoAnalysisView, VideoAnalyzer, type AnalyzedVideo } from "@/components/video-analysis/analyzer";
@@ -66,6 +67,7 @@ interface Pending {
 export function CreativeStep({ state, update, errors }: StepProps) {
   const c = state.creative;
   const toast = useToast();
+  const confirm = useConfirm();
   const inputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -110,9 +112,9 @@ export function CreativeStep({ state, update, errors }: StepProps) {
     void onFile(e.dataTransfer.files?.[0]);
   };
 
-  const onAnalyzed = ({ analysis, thumbnailKey, width, height }: AnalyzedVideo) => {
+  const onAnalyzed = async ({ analysis, thumbnailKey, width, height }: AnalyzedVideo) => {
     const rows: ScriptRow[] = analysis.scenes.map((sc) => ({ from: String(sc.from), to: String(sc.to), narration: sc.narration, telop: sc.telop, visual: sc.visual }));
-    const replace = rows.length > 0 && (c.script.length === 0 || window.confirm("AIの解析結果で台本を置き換えますか？（キャンセルすると今の台本を残します）"));
+    const replace = rows.length > 0 && (c.script.length === 0 || await confirm({ title: "台本をAIの解析結果で置き換えますか？", message: "「置き換えない」を選ぶと、今の台本はそのまま残ります。", confirmLabel: "置き換える", cancelLabel: "置き換えない" }));
     update((st) => ({
       ...st,
       creative: {

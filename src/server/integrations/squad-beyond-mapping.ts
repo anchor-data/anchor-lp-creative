@@ -106,6 +106,88 @@ export function parsePagesResponse(body: unknown): { pages: SbPage[]; totalPages
   return { pages, totalPages: data.pagination?.total_pages ?? 1 };
 }
 
+/** /ab_tests/url_search: the page a delivery / preview / Version URL (or UID) belongs to; null when nothing matched. */
+export function parseUrlSearchResponse(body: unknown): SbPage | null {
+  const parsed = pageSchema.safeParse(body);
+  if (!parsed.success) return null;
+  const p = parsed.data;
+  return {
+    id: p.uid,
+    name: p.title ?? "",
+    folder: p.folder?.name ?? null,
+    status: isActiveStatus(p.ad_status) ? "active" : "inactive",
+    url: p.delivery_url ?? null,
+    media: mapMedia(p.media?.name ?? ""),
+    raw: p as unknown,
+  };
+}
+
+/**
+ * Version UID in a Squad beyond article URL (`/articles/{uid}/…` on the preview or delivery domain),
+ * or in a console URL's `version=` parameter.
+ */
+export function sbVersionIdFromUrl(raw: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(raw.trim());
+  } catch {
+    return null;
+  }
+  const fromQuery = /squadbeyond\.com$/i.test(url.hostname) ? url.searchParams.get("version") : null;
+  const fromPath = /^\/articles\/([A-Za-z0-9_-]{6,})(\/|$)/.exec(url.pathname)?.[1] ?? null;
+  return fromQuery ?? fromPath;
+}
+
+/** True for URLs url_search can resolve: /ab/{uid}, /articles/{uid}, /redirect_pages/{uid}. */
+export function isSbResolvableUrl(raw: string): boolean {
+  try {
+    return /^\/(ab|articles|redirect_pages)\/[A-Za-z0-9_-]+/.test(new URL(raw.trim()).pathname);
+  } catch {
+    return false;
+  }
+}
+
+export interface SbVersionTotals {
+  spend: number | null;
+  pv: number | null;
+  /** beyond's CT (article → product LP click) = MCV */
+  mcv: number | null;
+  cv: number | null;
+  fsver: number | null;
+  oar: number | null;
+  days: number;
+}
+
+const versionSummarySchema = z.object({
+  rows: z.array(z.object({ article_uid: z.string().nullish(), ad_spending: num, pv: num, click: num, cv: num, fsver: num, oar: num }).passthrough()),
+});
+
+/** One version's row from a version_summary call with granularity=total (null when it had no traffic). */
+export function parseVersionSummaryRow(body: unknown, versionId: string): Omit<SbVersionTotals, "days"> | null {
+  const row = versionSummarySchema.parse(body).rows.find((r) => r.article_uid === versionId);
+  if (!row) return null;
+  return { spend: row.ad_spending, pv: row.pv, mcv: row.click, cv: row.cv, fsver: row.fsver, oar: row.oar };
+}
+
+/** Sums 30-day chunks: counts add up, rates are PV-weighted. */
+export function combineVersionTotals(parts: readonly Omit<SbVersionTotals, "days">[], days: number): SbVersionTotals {
+  const sum = (k: "spend" | "pv" | "mcv" | "cv"): number | null => {
+    const vals = parts.map((p) => p[k]).filter((v): v is number => v !== null);
+    return vals.length ? vals.reduce((a, b) => a + b, 0) : null;
+  };
+  const weighted = (k: "fsver" | "oar"): number | null => {
+    let w = 0;
+    let t = 0;
+    for (const p of parts) {
+      if (p[k] === null || !p.pv) continue;
+      w += p.pv;
+      t += (p[k] as number) * p.pv;
+    }
+    return w ? Math.round((t / w) * 100) / 100 : null;
+  };
+  return { spend: sum("spend"), pv: sum("pv"), mcv: sum("mcv"), cv: sum("cv"), fsver: weighted("fsver"), oar: weighted("oar"), days };
+}
+
 const rankingsResponseSchema = z.object({
   pagination: z.object({ total_pages: z.number().int().optional() }).passthrough().optional(),
   ab_tests: z.array(pageSchema.extend({ metrics: z.object({ page_view_count: num }).passthrough().nullish() })),

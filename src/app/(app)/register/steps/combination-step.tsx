@@ -10,6 +10,7 @@ import { api, errorMessage } from "@/components/client";
 import { useToast } from "@/components/toast";
 import type { FormState, ManualJudge } from "../form-state";
 import { SectionLabel, toNumber, Toggle, ToggleGroup, type StepProps } from "./shared";
+import { SbFillPanel } from "./sb-fill-panel";
 
 interface SbCreativeOption {
   id: string;
@@ -153,6 +154,8 @@ export function CombinationStep({ state, update, errors, categoryId, categoryNam
       {c.metricsSource === "sb" ? (
         <SbMetrics state={state} creatives={creatives} loading={loadingCreatives} onReload={() => void reloadCreatives()} basis={basis} errors={errors} onCreative={(id) => set({ sbCreativeId: id })} />
       ) : (
+        <>
+        {a.sbVersionId ? <SbFillPanel state={state} onFill={(patch) => update((st) => ({ ...st, combination: { ...st.combination, manual: { ...st.combination.manual, ...patch } } }))} /> : null}
         <div className="grid gap-3 grid-cols-2 md:grid-cols-4">
           {MANUAL_FIELDS.map(([k, label, req]) => (
             <Field key={k} label={label} required={req} error={errors[`manual.${k}`]}>
@@ -160,6 +163,7 @@ export function CombinationStep({ state, update, errors, categoryId, categoryNam
             </Field>
           ))}
         </div>
+        </>
       )}
 
       <JudgeBox state={state} basis={basis} categoryName={categoryName} errors={errors} set={set} />

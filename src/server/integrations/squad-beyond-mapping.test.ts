@@ -8,6 +8,11 @@ import {
   mapMedia,
   parseArticles,
   parseSbUrl,
+  parseUrlSearchResponse,
+  parseVersionSummaryRow,
+  combineVersionTotals,
+  sbVersionIdFromUrl,
+  isSbResolvableUrl,
   sbVersionUrl,
   parseOperationRows,
   parsePagesResponse,
@@ -174,5 +179,47 @@ describe("selectCreativeRows", () => {
   it("keeps every row when no key has spend (pages without ad cooperation)", () => {
     const rows = [row("utm_source=line", 0), row(null, null)];
     expect(selectCreativeRows(rows)).toHaveLength(2);
+  });
+});
+
+describe("Squad beyond URL resolution helpers", () => {
+  it("finds the version UID in preview, delivery and console URLs", () => {
+    expect(sbVersionIdFromUrl("https://sb-draft-preview.squadbeyond.com/articles/iYmYQvvIKmOUAPByMZxA/draft?token=x")).toBe("iYmYQvvIKmOUAPByMZxA");
+    expect(sbVersionIdFromUrl("https://lifenews-web.com/articles/abcdefgh123")).toBe("abcdefgh123");
+    expect(sbVersionIdFromUrl("https://app.squadbeyond.com/ab_tests/p1/versions/swipe?version=vX12345")).toBe("vX12345");
+    expect(sbVersionIdFromUrl("https://lifenews-web.com/ab/skincare_meta_002_neck")).toBeNull();
+    expect(sbVersionIdFromUrl("nope")).toBeNull();
+  });
+
+  it("knows which URLs url_search can resolve", () => {
+    expect(isSbResolvableUrl("https://lifenews-web.com/ab/skincare_meta_002_neck")).toBe(true);
+    expect(isSbResolvableUrl("https://sb-draft-preview.squadbeyond.com/articles/iYmYQvvIKmOUAPByMZxA/draft")).toBe(true);
+    expect(isSbResolvableUrl("https://aurelie.tokyo/lp?u=x")).toBe(false);
+  });
+
+  it("maps a url_search hit and treats {} as no match", () => {
+    expect(parseUrlSearchResponse({ uid: "p1", title: "002", ad_status: "active", delivery_url: "https://x/ab/p1", media: { name: "Meta(旧Facebook)" }, folder: { name: "Meta" } }))
+      .toMatchObject({ id: "p1", name: "002", folder: "Meta", status: "active", url: "https://x/ab/p1" });
+    expect(parseUrlSearchResponse({})).toBeNull();
+  });
+});
+
+describe("version totals", () => {
+  const body = { rows: [
+    { article_uid: "v1", ad_spending: 22834932, pv: 119848, click: 10329, cv: 1874, fsver: 54.28, oar: 12.6 },
+    { article_uid: "v2", ad_spending: 5, pv: 1, click: 0, cv: 0, fsver: null, oar: null },
+  ] };
+
+  it("picks the version's row; click is the MCV", () => {
+    expect(parseVersionSummaryRow(body, "v1")).toEqual({ spend: 22834932, pv: 119848, mcv: 10329, cv: 1874, fsver: 54.28, oar: 12.6 });
+    expect(parseVersionSummaryRow(body, "missing")).toBeNull();
+  });
+
+  it("adds counts and PV-weights rates across chunks", () => {
+    const t = combineVersionTotals([
+      { spend: 100, pv: 100, mcv: 10, cv: 1, fsver: 50, oar: 10 },
+      { spend: 300, pv: 300, mcv: 30, cv: 3, fsver: 60, oar: null },
+    ], 60);
+    expect(t).toEqual({ spend: 400, pv: 400, mcv: 40, cv: 4, fsver: 57.5, oar: 10, days: 60 });
   });
 });

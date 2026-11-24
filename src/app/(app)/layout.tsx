@@ -1,5 +1,6 @@
 import { AppHeader } from "@/components/app-header";
 import { ToastProvider } from "@/components/toast";
+import { ConfirmProvider } from "@/components/confirm";
 import { getCurrentUser } from "@/server/auth";
 import { countOpenCandidates } from "@/server/services/candidates";
 import { ApiError } from "@/server/http";
@@ -25,8 +26,10 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
   const pending = user.role === "viewer" ? { sb: 0, dpro: 0 } : await countOpenCandidates();
   return (
     <ToastProvider>
-      <AppHeader user={user} pending={pending} />
-      <main className="flex-1 w-full">{children}</main>
+      <ConfirmProvider>
+        <AppHeader user={user} pending={pending} />
+        <main className="flex-1 w-full">{children}</main>
+      </ConfirmProvider>
     </ToastProvider>
   );
 }

@@ -74,6 +74,7 @@ export interface FormState {
     sbPageId: string;
     sbPageName: string;
     sbVersionId: string;
+    sbVersionName: string;
     preview: LpPreview | null;
   };
   combination: {
@@ -96,7 +97,7 @@ export function emptyState(): FormState {
     sbCandidateId: null,
     product: { mode: "existing", id: "", label: "", categoryIdOfExisting: "", existingInfo: null, name: "", clientName: "", categoryId: "", targetGender: "", targetAge: "", targetPain: "", priceRange: "", offer: "", usp: "" },
     creative: { existingId: "", kind: "video", r2Key: "", fileName: "", fileSha256: "", thumbnailKey: "", sourceUrl: "", durationSec: "", width: "", height: "", mainCopy: "", script: [], sbCreativeId: "", analysis: null },
-    article: { source: "url", existingId: "", url: "", finalLpUrl: "", title: "", bodyText: "", blocks: [], screenshotKey: "", sbPageId: "", sbPageName: "", sbVersionId: "", preview: null },
+    article: { source: "url", existingId: "", url: "", finalLpUrl: "", title: "", bodyText: "", blocks: [], screenshotKey: "", sbPageId: "", sbPageName: "", sbVersionId: "", sbVersionName: "", preview: null },
     combination: {
       media: "", startDate: "", endDate: "", metricsSource: "manual", sbCreativeId: "",
       manual: { spend: "", imp: "", click: "", pv: "", cv: "", mcv: "", fsver: "", oar: "" },
@@ -139,11 +140,11 @@ export function stepPayload(s: FormState, step: StepKey): unknown {
       };
     case "article": {
       const a = s.article;
-      const fromSb = a.source === "sb";
       return {
         existingId: opt(a.existingId), url: a.url.trim(), finalLpUrl: a.finalLpUrl.trim(), title: opt(a.title), bodyText: opt(a.bodyText),
         blocks: a.blocks.filter((b) => b.heading.trim()), screenshotKey: opt(a.screenshotKey), fvKey: opt(a.screenshotKey),
-        sbPageId: fromSb ? opt(a.sbPageId) : undefined, sbVersionId: fromSb ? opt(a.sbVersionId) : undefined,
+        // Linked from either source: picked in 「Squad beyondから選ぶ」, or matched from the URL / name.
+        sbPageId: opt(a.sbPageId), sbVersionId: opt(a.sbVersionId),
         preview: a.preview ?? undefined,
       };
     }

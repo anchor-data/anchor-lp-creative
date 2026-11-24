@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Field, Input } from "@/components/ui";
 import { api, errorMessage } from "@/components/client";
 import { useToast } from "@/components/toast";
+import { useConfirm } from "@/components/confirm";
 import type { ExistingProductInfo, FormState } from "../form-state";
 import { CategorySelect, Note, ReadonlyValue, Toggle, ToggleGroup, type CategoryOption, type StepProps } from "./shared";
 
@@ -118,12 +119,13 @@ function ExistingProduct({ state, set, error }: PartProps & { error?: string }) 
 }
 
 function NewProduct({ state, set, errors, categories }: PartProps & { errors: Record<string, string>; categories: CategoryOption[] }) {
+  const confirm = useConfirm();
   const p = state.product;
   // "同じクライアントで同名の商材があれば確認"
   const checkSame = async () => {
     if (!p.name.trim() || !p.clientName.trim()) return;
     const res = await api<{ existingId: string | null }>(`/api/products?name=${encodeURIComponent(p.name.trim())}&clientName=${encodeURIComponent(p.clientName.trim())}`);
-    if (res.existingId && window.confirm("同じクライアントで同名の商材が登録されています。既存の商材を使いますか？")) {
+    if (res.existingId && await confirm({ title: "既存の商材を使いますか？", message: "同じクライアントで同名の商材が登録されています。", confirmLabel: "既存の商材を使う", cancelLabel: "新しく登録する" })) {
       set({ mode: "existing", id: res.existingId, label: `${p.name}（${p.clientName}）`, categoryIdOfExisting: p.categoryId, existingInfo: null });
     }
   };

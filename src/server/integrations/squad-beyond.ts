@@ -4,7 +4,8 @@ import { getEnv } from "../env";
 import { htmlToText } from "@/lib/domain/files";
 import {
   SB_DEFAULT_BASE_URL, joinUrl, parseArticles, parseHtml, parseOperationRows, parsePagesResponse, parseRankingsResponse,
-  type SbCreative, type SbOperationRow, type SbPage, type SbRankedPage, type SbVersion,
+  parseUrlSearchResponse, parseVersionSummaryRow,
+  type SbCreative, type SbOperationRow, type SbPage, type SbRankedPage, type SbVersion, type SbVersionTotals,
 } from "./squad-beyond-mapping";
 
 // Squad beyond public API client (spec 6-1). Endpoints and fields follow
@@ -27,6 +28,10 @@ export interface SquadBeyondClient {
   getVersionContent(versionId: string): Promise<{ text: string }>;
   /** One call: the Version's rendered HTML (text, preview images). */
   getVersionHtml(versionId: string): Promise<string>;
+  /** One call: the page a delivery / preview / Version URL belongs to (null when not found). */
+  searchPageByUrl(url: string): Promise<SbPage | null>;
+  /** One call: one Version's totals over [startDate, endDate] (at most 30 days); null when it had no traffic. */
+  getVersionTotals(pageId: string, versionId: string, startDate: string, endDate: string): Promise<Omit<SbVersionTotals, "days"> | null>;
   /** Daily rows for [startDate, endDate]; the API allows at most 30 days per call. */
   getBranchOperation(pageId: string, startDate: string, endDate: string, media: string): Promise<SbOperationRow[]>;
 }
@@ -122,6 +127,17 @@ class HttpSquadBeyondClient implements SquadBeyondClient {
 
   async getVersionContent(versionId: string): Promise<{ text: string }> {
     return { text: htmlToText(await this.getVersionHtml(versionId)).text };
+  }
+
+  async searchPageByUrl(url: string): Promise<SbPage | null> {
+    return parseUrlSearchResponse(await this.get<unknown>("ab_tests/url_search", { url }));
+  }
+
+  async getVersionTotals(pageId: string, versionId: string, startDate: string, endDate: string): Promise<Omit<SbVersionTotals, "days"> | null> {
+    const body = await this.get<unknown>(`branch_operations/ab_tests/${encodeURIComponent(pageId)}/version_summary`, {
+      start_date: startDate, end_date: endDate, granularity: "total",
+    });
+    return parseVersionSummaryRow(body, versionId);
   }
 
   async getBranchOperation(pageId: string, startDate: string, endDate: string, media: string): Promise<SbOperationRow[]> {

@@ -11,6 +11,7 @@ import type { LpPreview } from "@/lib/domain/lp-preview";
 import { LpOgpCard, LpPreviewImage } from "@/components/lp-preview";
 import { ReadonlyValue, Toggle, ToggleGroup, upload, type StepProps } from "./shared";
 import { SbPagePicker } from "./sb-page-picker";
+import { linkPatch, resolveSb, SbLinkPanel, SB_UNLINK, type SbMatch } from "./sb-link-panel";
 
 interface SbVersion {
   id: string;
@@ -33,7 +34,7 @@ interface CaptureResult {
 }
 
 /** Fields filled from the chosen source; cleared when the source or the page changes so nothing stale carries over. */
-const SOURCE_FIELDS = { url: "", title: "", bodyText: "", blocks: [], preview: null, sbPageId: "", sbPageName: "", sbVersionId: "", existingId: "" } satisfies Partial<FormState["article"]>;
+const SOURCE_FIELDS = { url: "", title: "", bodyText: "", blocks: [], preview: null, sbPageId: "", sbPageName: "", sbVersionId: "", sbVersionName: "", existingId: "" } satisfies Partial<FormState["article"]>;
 
 export function ArticleStep({ state, update, errors }: StepProps) {
   const a = state.article;
@@ -122,17 +123,17 @@ function SbSource({ state, set, onBody, errors }: SourceProps) {
   const chooseVersion = async (id: string, list: SbVersion[] = versions) => {
     const v = list.find((x) => x.id === id);
     if (!v) {
-      set({ sbVersionId: "", url: "", bodyText: "", blocks: [], preview: null });
+      set({ sbVersionId: "", sbVersionName: "", url: "", bodyText: "", blocks: [], preview: null });
       return;
     }
     // The previous version's name is replaced; a title the user typed is kept.
     const prevAuto = list.find((x) => x.id === a.sbVersionId)?.name ?? "";
     const title = !a.title || a.title === prevAuto ? v.name : a.title;
-    set({ sbVersionId: id, url: v.url, title, bodyText: "", blocks: [], preview: null });
+    set({ sbVersionId: id, sbVersionName: v.name, url: v.url, title, bodyText: "", blocks: [], preview: null });
     setLoadingBody(true);
     try {
       const c = await api<SbVersionContent>(`/api/sb/versions/${encodeURIComponent(id)}/content`);
-      onBody({ sbVersionId: id, url: c.url, title, bodyText: c.bodyText, preview: c.preview });
+      onBody({ sbVersionId: id, sbVersionName: v.name, url: c.url, title, bodyText: c.bodyText, preview: c.preview });
     } catch (err) {
       toast.error(`${errorMessage(err)}　本文を貼り付けてください`);
     } finally {
@@ -216,7 +217,28 @@ function UrlSource({ state, set, onBody, errors }: SourceProps) {
   const toast = useToast();
   const confirm = useConfirm();
   const [capturing, setCapturing] = useState(false);
+  const [resolving, setResolving] = useState(false);
+  const [candidates, setCandidates] = useState<SbMatch[]>([]);
   const lastCaptured = useRef("");
+
+  /** Links the article to its beyond page / Version when the URL identifies one; otherwise lists name candidates. */
+  const matchSb = async (url: string, title: string) => {
+    setResolving(true);
+    try {
+      const r = await resolveSb(url, title, state.product.name || state.product.label);
+      if (r.match) {
+        // Squad beyond previews have no <title>: name the article after the matched Version.
+        set({ ...linkPatch(r.match), ...(!title && r.match.versionName ? { title: r.match.versionName } : {}) });
+        setCandidates([]);
+      } else {
+        setCandidates(r.candidates);
+      }
+    } catch {
+      setCandidates([]); // matching is a convenience; registration works without it
+    } finally {
+      setResolving(false);
+    }
+  };
 
   const capture = async () => {
     const url = a.url.trim();
@@ -229,20 +251,26 @@ function UrlSource({ state, set, onBody, errors }: SourceProps) {
         set({ existingId: res.existing.id, title: res.existing.title ?? "" });
         return;
       }
-      onBody({ title: a.title || res.preview.title || res.title || "", bodyText: res.bodyText, preview: res.preview });
+      const title = a.title || res.preview.title || res.title || "";
+      onBody({ title, bodyText: res.bodyText, preview: res.preview });
+      if (!a.sbPageId) void matchSb(url, title);
     } catch (err) {
       toast.error(`${errorMessage(err)}　本文を貼り付けてください`);
+      if (!a.sbPageId) void matchSb(url, a.title);
     } finally {
       setCapturing(false);
     }
   };
 
   return (
-    <div className="grid gap-3 md:grid-cols-[1fr_auto] items-end">
-      <Field label="記事LPのURL" required error={errors.url}>
-        <Input value={a.url} onChange={(e) => set({ url: e.target.value, existingId: "" })} onBlur={capture} placeholder="https://" invalid={Boolean(errors.url)} />
-      </Field>
-      <Button onClick={() => { lastCaptured.current = ""; void capture(); }} disabled={capturing || !a.url.trim().startsWith("https://")}>{capturing ? "取得中…" : "本文を取得"}</Button>
+    <div className="flex flex-col gap-3">
+      <div className="grid gap-3 md:grid-cols-[1fr_auto] items-end">
+        <Field label="記事LPのURL" required error={errors.url}>
+          <Input value={a.url} onChange={(e) => { setCandidates([]); set({ url: e.target.value, existingId: "", ...SB_UNLINK }); }} onBlur={capture} placeholder="https://" invalid={Boolean(errors.url)} />
+        </Field>
+        <Button onClick={() => { lastCaptured.current = ""; void capture(); }} disabled={capturing || !a.url.trim().startsWith("https://")}>{capturing ? "取得中…" : "本文を取得"}</Button>
+      </div>
+      <SbLinkPanel article={a} candidates={candidates} resolving={resolving} set={set} />
     </div>
   );
 }

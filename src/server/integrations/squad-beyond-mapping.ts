@@ -152,7 +152,29 @@ const articlesResponseSchema = z.object({
 export function parseArticles(pageId: string, body: unknown): SbVersion[] {
   return articlesResponseSchema.parse(body).articles
     .filter((a) => !a.archived)
-    .map((a) => ({ id: a.uid, pageId, name: a.memo?.trim() || a.uid, url: null, raw: a as unknown }));
+    .map((a) => ({ id: a.uid, pageId, name: a.memo?.trim() || a.uid, url: sbVersionUrl(pageId, a.uid), raw: a as unknown }));
+}
+
+/**
+ * Stable per-Version URL in the Squad beyond console (the sheet's beyondページID column uses this form).
+ * The public delivery URL is shared by every Version of a page, so it cannot identify one article.
+ */
+export function sbVersionUrl(pageId: string, versionId: string): string {
+  return `https://app.squadbeyond.com/ab_tests/${encodeURIComponent(pageId)}/versions/swipe?version=${encodeURIComponent(versionId)}`;
+}
+
+/** Page (and Version, when present) from a pasted Squad beyond console URL. */
+export function parseSbUrl(raw: string): { pageId: string; versionId: string | null } | null {
+  let url: URL;
+  try {
+    url = new URL(raw.trim());
+  } catch {
+    return null;
+  }
+  if (!/(^|\.)squadbeyond\.com$/i.test(url.hostname)) return null;
+  const pageId = /\/ab_tests\/([^/?#]+)/.exec(url.pathname)?.[1];
+  if (!pageId) return null;
+  return { pageId: decodeURIComponent(pageId), versionId: url.searchParams.get("version") };
 }
 
 const htmlResponseSchema = z.object({ html: z.string() });
@@ -181,7 +203,8 @@ export function parseOperationRows(pageId: string, date: string, media: string, 
     parameter: r.parameter ?? null,
     media,
     spend: r.ad_spending, pv: r.pv, click: r.click, ctr: r.ctr, cv: r.cv, cvr: r.cvr, ctvr: r.ctvr,
-    cpa: r.cpa, mcv: null, mcvr: null, mcpa: r.mcpa, // the public API has no micro-CV count/rate
+    // beyond's CT (article → product LP click) is the MCV: mcpa = ad_spending / click, and ctr = click / pv.
+    cpa: r.cpa, mcv: r.click, mcvr: r.ctr, mcpa: r.mcpa,
     fver: r.fver, sver: r.sver, fsver: r.fsver, oar: r.oar,
     mediaImp: r.media_imp, mediaCtr: r.media_ctr, mediaCpm: r.media_cpm, mediaCpc: r.media_cpc,
     raw: r as unknown,

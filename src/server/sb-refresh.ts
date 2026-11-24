@@ -49,7 +49,7 @@ async function saveView(view: SbRefreshView, userId: string): Promise<void> {
   });
 }
 
-function friendlyError(err: unknown): string {
+export function friendlyError(err: unknown): string {
   if (err instanceof SbAuthError) return "Squad beyondの認証に失敗しました（APIキーを確認してください）";
   if (err instanceof SbRateLimitError) return "Squad beyond APIの利用上限に達しました。しばらくしてから再度お試しください";
   if (err instanceof SbNotConfiguredError) return "Squad beyondのAPIキーが設定されていません";

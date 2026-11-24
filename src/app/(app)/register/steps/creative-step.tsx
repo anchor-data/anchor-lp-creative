@@ -5,6 +5,9 @@ import { Button, Field, Input } from "@/components/ui";
 import { errorMessage } from "@/components/client";
 import { useToast } from "@/components/toast";
 import type { FormState, ScriptRow } from "../form-state";
+import { DriveEmbed } from "@/components/drive-embed";
+import { VideoAnalysisView, VideoAnalyzer, type AnalyzedVideo } from "@/components/video-analysis/analyzer";
+import { driveFileId } from "@/lib/domain/drive";
 import { SectionLabel, Toggle, ToggleGroup, upload, type StepProps } from "./shared";
 
 const ACCEPT = { video: "video/mp4,video/quicktime", banner: "image/jpeg,image/png,image/webp,image/gif" } as const;
@@ -75,7 +78,7 @@ export function CreativeStep({ state, update, errors }: StepProps) {
     if (kind === "video") {
       const meta = await captureVideoFrame(file);
       const thumb = meta.thumb ? await upload("screenshot", meta.thumb, "thumb.jpg") : null;
-      set({ r2Key: key, fileSha256: sha256, fileName: file.name, existingId: "", thumbnailKey: thumb?.key ?? "", durationSec: meta.duration ? meta.duration.toFixed(1) : "", width: String(meta.width || ""), height: String(meta.height || "") });
+      set({ analysis: null, r2Key: key, fileSha256: sha256, fileName: file.name, existingId: "", thumbnailKey: thumb?.key ?? "", durationSec: meta.duration ? meta.duration.toFixed(1) : "", width: String(meta.width || ""), height: String(meta.height || "") });
     } else {
       const size = await imageSize(file);
       set({ r2Key: key, fileSha256: sha256, fileName: file.name, existingId: "", thumbnailKey: key, width: String(size.width || ""), height: String(size.height || "") });
@@ -107,6 +110,24 @@ export function CreativeStep({ state, update, errors }: StepProps) {
     void onFile(e.dataTransfer.files?.[0]);
   };
 
+  const onAnalyzed = ({ analysis, thumbnailKey, width, height }: AnalyzedVideo) => {
+    const rows: ScriptRow[] = analysis.scenes.map((sc) => ({ from: String(sc.from), to: String(sc.to), narration: sc.narration, telop: sc.telop, visual: sc.visual }));
+    const replace = rows.length > 0 && (c.script.length === 0 || window.confirm("AIの解析結果で台本を置き換えますか？（キャンセルすると今の台本を残します）"));
+    update((st) => ({
+      ...st,
+      creative: {
+        ...st.creative,
+        analysis,
+        script: replace ? rows : st.creative.script,
+        durationSec: st.creative.durationSec || (analysis.durationSec ? analysis.durationSec.toFixed(1) : ""),
+        width: st.creative.width || (width ? String(width) : ""),
+        height: st.creative.height || (height ? String(height) : ""),
+        thumbnailKey: st.creative.thumbnailKey || thumbnailKey || "",
+      },
+    }));
+  };
+  const isDrive = Boolean(driveFileId(c.sourceUrl));
+
   const setRow = (i: number, patch: Partial<ScriptRow>) => set({ script: c.script.map((r, j) => (j === i ? { ...r, ...patch } : r)) });
   const addRow = () => {
     const last = c.script.at(-1);
@@ -121,7 +142,7 @@ export function CreativeStep({ state, update, errors }: StepProps) {
     <div className="flex flex-col gap-5">
       <ToggleGroup>
         <Toggle active={kind === "video"} onClick={() => set({ kind: "video", r2Key: "", thumbnailKey: "", fileName: "" })}>動画</Toggle>
-        <Toggle active={kind === "banner"} onClick={() => set({ kind: "banner", r2Key: "", thumbnailKey: "", fileName: "", durationSec: "", script: [] })}>バナー</Toggle>
+        <Toggle active={kind === "banner"} onClick={() => set({ kind: "banner", r2Key: "", thumbnailKey: "", fileName: "", durationSec: "", script: [], analysis: null })}>バナー</Toggle>
       </ToggleGroup>
 
       {c.existingId ? (
@@ -178,8 +199,14 @@ export function CreativeStep({ state, update, errors }: StepProps) {
 
       {showUrl ? (
         <Field label="クリエイティブのURL" hint="ファイルかURLのどちらかが必要です">
-          <Input value={c.sourceUrl} onChange={(e) => set({ sourceUrl: e.target.value })} placeholder="https://" />
+          <Input value={c.sourceUrl} onChange={(e) => set({ sourceUrl: e.target.value, analysis: null })} placeholder="https://" />
         </Field>
+      ) : null}
+      {isDrive && !c.r2Key ? (
+        <div className="flex flex-col gap-1">
+          <DriveEmbed url={c.sourceUrl} className="w-full max-w-xl aspect-video" />
+          <p className="text-xs text-ink-3">Googleドライブのプレビュー（再生できない場合は、ドライブの共有設定かGoogleへのログインを確認してください）</p>
+        </div>
       ) : null}
 
       <Field label="メインコピー">
@@ -187,19 +214,38 @@ export function CreativeStep({ state, update, errors }: StepProps) {
       </Field>
 
       {kind === "video" ? (
+        <div className="flex flex-col gap-2.5 border border-line bg-canvas px-4 py-3.5">
+          <SectionLabel>動画の解析（AI）</SectionLabel>
+          <p className="text-xs text-ink-3">音声の文字起こしと画面のフレームから、台本・フック・訴求ポイントを作ります。台本は下に入ります。</p>
+          <VideoAnalyzer
+            source={{ r2Key: c.r2Key || null, url: c.r2Key ? null : c.sourceUrl || null }}
+            mainCopy={c.mainCopy}
+            productName={state.product.name || state.product.label}
+            hasResult={Boolean(c.analysis)}
+            onAnalyzed={onAnalyzed}
+          />
+          {c.analysis ? <VideoAnalysisView analysis={c.analysis} /> : null}
+        </div>
+      ) : null}
+
+      {kind === "video" ? (
         <div className="flex flex-col gap-2">
           <SectionLabel>台本（秒数ごと・修正できます）</SectionLabel>
           {c.script.length > 0 ? (
             <div className="flex flex-col">
               {c.script.map((r, i) => (
-                <div key={i} className="grid grid-cols-[6.5rem_1fr_auto] items-center border border-line -mt-px first:mt-0 bg-white">
-                  <div className="flex items-center gap-0.5 px-2 text-sm font-bold">
+                <div key={i} className="grid grid-cols-[6.5rem_1fr_auto] items-start border border-line -mt-px first:mt-0 bg-white">
+                  <div className="flex items-center gap-0.5 px-2 pt-2.5 text-sm font-bold">
                     <input value={r.from} onChange={(e) => setRow(i, { from: e.target.value })} aria-label="開始秒" inputMode="numeric" className="w-7 text-right outline-none focus:bg-canvas" />
                     〜
                     <input value={r.to} onChange={(e) => setRow(i, { to: e.target.value })} aria-label="終了秒" inputMode="numeric" className="w-7 text-right outline-none focus:bg-canvas" />
                     秒
                   </div>
-                  <input value={r.narration} onChange={(e) => setRow(i, { narration: e.target.value })} placeholder="セリフ・テロップ・映像の内容" className="h-10 px-2 text-sm outline-none focus:bg-canvas min-w-0" />
+                  <div className="flex flex-col min-w-0 py-1">
+                    <input value={r.narration} onChange={(e) => setRow(i, { narration: e.target.value })} placeholder="セリフ・ナレーション" aria-label="セリフ" className="h-8 px-2 text-sm outline-none focus:bg-canvas min-w-0" />
+                    <input value={r.telop} onChange={(e) => setRow(i, { telop: e.target.value })} placeholder="テロップ" aria-label="テロップ" className="h-7 px-2 text-xs text-ink-2 outline-none focus:bg-canvas min-w-0" />
+                    <input value={r.visual} onChange={(e) => setRow(i, { visual: e.target.value })} placeholder="映像の内容" aria-label="映像" className="h-7 px-2 text-xs text-ink-3 outline-none focus:bg-canvas min-w-0" />
+                  </div>
                   <button type="button" onClick={() => set({ script: c.script.filter((_, j) => j !== i) })} aria-label="行を削除" className="px-3 h-10 text-ink-4 hover:text-ink">×</button>
                 </div>
               ))}

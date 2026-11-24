@@ -7,6 +7,8 @@ import {
   joinUrl,
   mapMedia,
   parseArticles,
+  parseSbUrl,
+  sbVersionUrl,
   parseOperationRows,
   parsePagesResponse,
   parseRankingsResponse,
@@ -117,6 +119,23 @@ describe("parseArticles", () => {
     });
     expect(versions.map((v) => [v.id, v.name, v.pageId])).toEqual([["v1", "FV赤", "ab-uid-1"], ["v2", "v2", "ab-uid-1"]]);
   });
+
+  it("gives every version its own console URL", () => {
+    const [v] = parseArticles("ab-uid-1", { articles: [{ uid: "v1", memo: "x" }] });
+    expect(v.url).toBe("https://app.squadbeyond.com/ab_tests/ab-uid-1/versions/swipe?version=v1");
+  });
+});
+
+describe("parseSbUrl", () => {
+  it("reads page and version from a console URL", () => {
+    expect(parseSbUrl("https://app.squadbeyond.com/ab_tests/skincare_meta_002_neck/versions/swipe?version=iYmYQvvIKmOUAPByMZxA")).toEqual({ pageId: "skincare_meta_002_neck", versionId: "iYmYQvvIKmOUAPByMZxA" });
+    expect(parseSbUrl(sbVersionUrl("p 1", "v1"))).toEqual({ pageId: "p 1", versionId: "v1" });
+  });
+  it("accepts a page URL without a version and rejects other hosts", () => {
+    expect(parseSbUrl("https://app.squadbeyond.com/ab_tests/abc/versions")).toEqual({ pageId: "abc", versionId: null });
+    expect(parseSbUrl("https://example.com/ab_tests/abc")).toBeNull();
+    expect(parseSbUrl("abc")).toBeNull();
+  });
 });
 
 describe("parseOperationRows", () => {
@@ -131,7 +150,7 @@ describe("parseOperationRows", () => {
   it("maps daily rows to version × creative and skips rows without a version", () => {
     const rows = parseOperationRows("ab-uid-1", "2026-11-23", "meta", body);
     expect(rows).toHaveLength(2);
-    expect(rows[0]).toMatchObject({ date: "2026-11-23", versionId: "v1", creativeId: creativeId("ab-uid-1", "cr_01"), parameter: "cr_01", media: "meta", spend: 1200.4, pv: 300, mcv: null, mediaCpc: 60 });
+    expect(rows[0]).toMatchObject({ date: "2026-11-23", versionId: "v1", creativeId: creativeId("ab-uid-1", "cr_01"), parameter: "cr_01", media: "meta", spend: 1200.4, pv: 300, mcv: 40, mcvr: 13.3, mediaCpc: 60 });
     expect(rows[1]).toMatchObject({ creativeId: creativeId("ab-uid-1", null), parameter: null, spend: null });
   });
 

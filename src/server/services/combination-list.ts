@@ -1,4 +1,5 @@
 import "server-only";
+import { parseLpPreview, previewImage } from "@/lib/domain/lp-preview";
 import { z } from "zod";
 import type { InValue } from "@libsql/client";
 import { getRawClient } from "../db/client";
@@ -74,6 +75,10 @@ export interface CardRow {
   views: number | null;
   thumbnailKey: string | null;
   fvKey: string | null;
+  /** Creative URL (Drive poster fallback when no thumbnail was stored). */
+  sourceUrl: string | null;
+  /** LP image captured at registration (OGP or first view) when no screenshot was uploaded. */
+  lpImage: string | null;
   tags: string[];
   createdAt: string;
 }
@@ -99,7 +104,7 @@ mkt AS (
 ),
 base AS (
   SELECT c.*, p.name AS product_name, p.category_id, cat.parent_id AS parent_category_id,
-         cr.kind, cr.duration_sec, cr.thumbnail_r2_key, a.title AS article_title, a.fv_r2_key,
+         cr.kind, cr.duration_sec, cr.thumbnail_r2_key, cr.source_url, a.title AS article_title, a.fv_r2_key, a.preview_json,
          COALESCE(c.judge_manual, c.judge_auto, CASE WHEN c.origin = 'market' THEN 'hit' END) AS final_judge,
          COALESCE(sbt.spend, mmt.spend) AS t_spend, COALESCE(sbt.cv, mmt.cv) AS t_cv,
          COALESCE(sbt.mcv, mmt.mcv) AS t_mcv, COALESCE(sbt.pv, mmt.pv) AS t_pv,
@@ -264,6 +269,8 @@ function toCard(r: Record<string, unknown>): CardRow {
     views: num(r.views),
     thumbnailKey: strOrNull(r.thumbnail_r2_key),
     fvKey: strOrNull(r.fv_r2_key),
+    sourceUrl: strOrNull(r.source_url),
+    lpImage: previewImage(parseLpPreview(r.preview_json)),
     tags: r.tag_names ? String(r.tag_names).split("|") : [],
     createdAt: String(r.created_at),
   };

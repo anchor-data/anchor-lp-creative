@@ -1,5 +1,7 @@
 // 登録ウィザード (S-04) payload. Shared by the wizard UI and POST /api/registrations.
 import { z } from "zod";
+import { lpPreviewSchema } from "./lp-preview";
+import { videoAnalysisSchema } from "./video-analysis";
 
 const ymd = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "日付の形式が正しくありません");
 const nonNegInt = z.coerce.number().int("整数で入力してください").min(0, "0以上の整数で入力してください");
@@ -42,6 +44,7 @@ export const creativeStepSchema = z
     mainCopy: z.string().max(2000).optional(),
     script: z.array(z.object({ from: z.number(), to: z.number(), visual: z.string().default(""), telop: z.string().default(""), narration: z.string().default("") })).default([]),
     sbCreativeId: z.string().optional(),
+    analysis: videoAnalysisSchema.optional(),
   })
   .refine((c) => c.existingId || c.r2Key || (c.sourceUrl && c.sourceUrl.length > 0), { message: "ファイルかURLのどちらかを指定してください", path: ["sourceUrl"] })
   .refine((c) => !c.sourceUrl || /^https?:\/\//.test(c.sourceUrl), { message: "URLの形式が正しくありません", path: ["sourceUrl"] });
@@ -57,6 +60,7 @@ export const articleStepSchema = z.object({
   fvKey: z.string().optional(),
   sbPageId: z.string().optional(),
   sbVersionId: z.string().optional(),
+  preview: lpPreviewSchema.optional(),
 });
 
 export const manualMetricsSchema = z.object({

@@ -25,6 +25,8 @@ export interface SquadBeyondClient {
   listPagesPage(page: number): Promise<{ pages: SbPage[]; totalPages: number }>;
   getPageMaster(pageId: string): Promise<{ versions: SbVersion[]; creatives: SbCreative[] }>;
   getVersionContent(versionId: string): Promise<{ text: string }>;
+  /** One call: the Version's rendered HTML (text, preview images). */
+  getVersionHtml(versionId: string): Promise<string>;
   /** Daily rows for [startDate, endDate]; the API allows at most 30 days per call. */
   getBranchOperation(pageId: string, startDate: string, endDate: string, media: string): Promise<SbOperationRow[]>;
 }
@@ -114,9 +116,12 @@ class HttpSquadBeyondClient implements SquadBeyondClient {
     return { versions: parseArticles(pageId, await this.get<unknown>(`ab_tests/${uid}/articles`)), creatives: [] };
   }
 
+  async getVersionHtml(versionId: string): Promise<string> {
+    return parseHtml(await this.get<unknown>(`articles/${encodeURIComponent(versionId)}/html`));
+  }
+
   async getVersionContent(versionId: string): Promise<{ text: string }> {
-    const html = parseHtml(await this.get<unknown>(`articles/${encodeURIComponent(versionId)}/html`));
-    return { text: htmlToText(html).text };
+    return { text: htmlToText(await this.getVersionHtml(versionId)).text };
   }
 
   async getBranchOperation(pageId: string, startDate: string, endDate: string, media: string): Promise<SbOperationRow[]> {

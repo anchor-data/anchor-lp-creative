@@ -6,17 +6,33 @@ import { Button, Field, Input, Select, Textarea } from "@/components/ui";
 import { api, errorMessage } from "@/components/client";
 import { useToast } from "@/components/toast";
 import type { BlockRow, FormState } from "../form-state";
-import { ReadonlyValue, Toggle, ToggleGroup, upload, type SbOption, type StepProps } from "./shared";
+import type { LpPreview } from "@/lib/domain/lp-preview";
+import { LpOgpCard, LpPreviewImage } from "@/components/lp-preview";
+import { ReadonlyValue, Toggle, ToggleGroup, upload, type StepProps } from "./shared";
+import { SbPagePicker } from "./sb-page-picker";
 
-interface SbVersion extends SbOption {
-  url: string | null;
-  bodyText: string | null;
+interface SbVersion {
+  id: string;
+  name: string;
+  url: string;
+  hasBody: boolean;
+}
+interface SbVersionContent {
+  versionId: string;
+  name: string;
+  url: string;
+  bodyText: string;
+  preview: LpPreview | null;
 }
 interface CaptureResult {
   title: string | null;
   bodyText: string;
+  preview: LpPreview;
   existing: { id: string; title: string | null } | null;
 }
+
+/** Fields filled from the chosen source; cleared when the source or the page changes so nothing stale carries over. */
+const SOURCE_FIELDS = { url: "", title: "", bodyText: "", blocks: [], preview: null, sbPageId: "", sbPageName: "", sbVersionId: "", existingId: "" } satisfies Partial<FormState["article"]>;
 
 export function ArticleStep({ state, update, errors }: StepProps) {
   const a = state.article;
@@ -36,17 +52,20 @@ export function ArticleStep({ state, update, errors }: StepProps) {
       setDecomposing(false);
     }
   };
-  /** New body text arrived: keep it and let AI split it unless blocks already exist. */
+  /** New body text arrived from the source: keep it and let AI split it into blocks. */
   const onBody = (patch: Partial<FormState["article"]>) => {
-    set(patch);
-    if (patch.bodyText && a.blocks.length === 0) void decompose(patch.bodyText);
+    set({ ...patch, blocks: [] });
+    if (patch.bodyText) void decompose(patch.bodyText);
+  };
+  const switchSource = (source: FormState["article"]["source"]) => {
+    if (source !== a.source) set({ ...SOURCE_FIELDS, source });
   };
 
   return (
     <div className="flex flex-col gap-5">
       <ToggleGroup>
-        <Toggle active={a.source === "sb"} onClick={() => set({ source: "sb" })}>Squad beyondから選ぶ</Toggle>
-        <Toggle active={a.source === "url"} onClick={() => set({ source: "url", sbPageId: "", sbVersionId: "" })}>URLを入力</Toggle>
+        <Toggle active={a.source === "sb"} onClick={() => switchSource("sb")}>Squad beyondから選ぶ</Toggle>
+        <Toggle active={a.source === "url"} onClick={() => switchSource("url")}>URLを入力</Toggle>
       </ToggleGroup>
       {a.existingId ? (
         <div className="border border-orange bg-orange-tint px-4 py-3 text-sm flex flex-wrap justify-between items-center gap-2">
@@ -56,6 +75,8 @@ export function ArticleStep({ state, update, errors }: StepProps) {
       ) : null}
 
       {a.source === "sb" ? <SbSource state={state} set={set} onBody={onBody} errors={errors} /> : <UrlSource state={state} set={set} onBody={onBody} errors={errors} />}
+
+      {a.url && (a.preview || a.bodyText) ? <LpOgpCard preview={a.preview} url={a.url} fallbackTitle={a.title} /> : null}
 
       <Field label="記事タイトル">
         <Input value={a.title} maxLength={300} onChange={(e) => set({ title: e.target.value })} placeholder="40代からの乾燥対策" />
@@ -88,41 +109,102 @@ interface SourceProps {
 function SbSource({ state, set, onBody, errors }: SourceProps) {
   const a = state.article;
   const toast = useToast();
-  const [pages, setPages] = useState<SbOption[]>([]);
   const [versions, setVersions] = useState<SbVersion[]>([]);
+  /** Page whose version list is shown; differs from a.sbPageId while loading. */
+  const [loadedFor, setLoadedFor] = useState("");
+  const [refreshing, setRefreshing] = useState(false);
+  const [loadingBody, setLoadingBody] = useState(false);
+  /** Version to select once the list arrives (from a pasted URL). */
+  const pendingVersion = useRef<string | null>(null);
+  const loadingVersions = refreshing || (Boolean(a.sbPageId) && loadedFor !== a.sbPageId);
+
+  const chooseVersion = async (id: string, list: SbVersion[] = versions) => {
+    const v = list.find((x) => x.id === id);
+    if (!v) {
+      set({ sbVersionId: "", url: "", bodyText: "", blocks: [], preview: null });
+      return;
+    }
+    // The previous version's name is replaced; a title the user typed is kept.
+    const prevAuto = list.find((x) => x.id === a.sbVersionId)?.name ?? "";
+    const title = !a.title || a.title === prevAuto ? v.name : a.title;
+    set({ sbVersionId: id, url: v.url, title, bodyText: "", blocks: [], preview: null });
+    setLoadingBody(true);
+    try {
+      const c = await api<SbVersionContent>(`/api/sb/versions/${encodeURIComponent(id)}/content`);
+      onBody({ sbVersionId: id, url: c.url, title, bodyText: c.bodyText, preview: c.preview });
+    } catch (err) {
+      toast.error(`${errorMessage(err)}　本文を貼り付けてください`);
+    } finally {
+      setLoadingBody(false);
+    }
+  };
+
+  const fetchVersions = (pageId: string, refresh: boolean) =>
+    api<{ items: SbVersion[] }>(`/api/sb/pages/${encodeURIComponent(pageId)}/versions${refresh ? "?refresh=1" : ""}`).then((r) => r.items);
+
+  const applyVersions = (pageId: string, items: SbVersion[]) => {
+    setVersions(items);
+    setLoadedFor(pageId);
+    const want = pendingVersion.current;
+    pendingVersion.current = null;
+    if (!want) return;
+    if (items.some((v) => v.id === want)) void chooseVersion(want, items);
+    else toast.error("URLのVersionがこのページに見つかりません。Versionを選んでください");
+  };
 
   useEffect(() => {
-    api<{ items: SbOption[] }>("/api/sb/pages").then((r) => setPages(r.items)).catch((err) => toast.error(errorMessage(err)));
-  }, [toast]);
-  useEffect(() => {
+    const pageId = a.sbPageId;
+    if (!pageId) return;
+    let live = true;
+    fetchVersions(pageId, false)
+      .then((items) => { if (live) applyVersions(pageId, items); })
+      .catch((err: unknown) => { if (live) { setLoadedFor(pageId); toast.error(errorMessage(err)); } });
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reload only when the page changes
+  }, [a.sbPageId]);
+
+  const refreshVersions = async () => {
     if (!a.sbPageId) return;
-    api<{ items: SbVersion[] }>(`/api/sb/pages/${a.sbPageId}/versions`).then((r) => setVersions(r.items)).catch((err) => toast.error(errorMessage(err)));
-  }, [a.sbPageId, toast]);
-
-  const chooseVersion = (id: string) => {
-    const v = versions.find((x) => x.id === id);
-    onBody({ sbVersionId: id, url: v?.url ?? a.url, title: a.title || v?.name || "", bodyText: v?.bodyText ?? a.bodyText });
+    setRefreshing(true);
+    try {
+      applyVersions(a.sbPageId, await fetchVersions(a.sbPageId, true));
+    } catch (err) {
+      toast.error(errorMessage(err));
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   return (
     <>
       <div className="grid gap-4 md:grid-cols-2">
-        <Field label="beyondページ" required>
-          <Select value={a.sbPageId} onChange={(e) => { set({ sbPageId: e.target.value, sbVersionId: "" }); setVersions([]); }}>
-            <option value="">選んでください</option>
-            {pages.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </Select>
+        <Field label="beyondページ" required error={errors.sbPageId}>
+          <SbPagePicker
+            pageId={a.sbPageId}
+            pageName={a.sbPageName}
+            onPick={(page, versionId) => {
+              pendingVersion.current = versionId;
+              if (page.id === a.sbPageId) {
+                if (versionId) void chooseVersion(versionId);
+                return;
+              }
+              set({ ...SOURCE_FIELDS, source: "sb", sbPageId: page.id, sbPageName: page.name, finalLpUrl: a.finalLpUrl, screenshotKey: a.screenshotKey });
+            }}
+          />
         </Field>
-        <Field label="Version" required>
-          <Select value={a.sbVersionId} onChange={(e) => chooseVersion(e.target.value)} disabled={!a.sbPageId}>
-            <option value="">選んでください</option>
-            {versions.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
-          </Select>
+        <Field label="Version" required error={errors.sbVersionId}>
+          <div className="flex gap-2">
+            <Select value={a.sbVersionId} onChange={(e) => void chooseVersion(e.target.value)} disabled={!a.sbPageId || loadingVersions}>
+              <option value="">{loadingVersions ? "Versionを読み込んでいます…" : a.sbPageId && versions.length === 0 ? "Versionがありません" : "選んでください"}</option>
+              {(loadedFor === a.sbPageId ? versions : []).map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+            </Select>
+            <Button size="sm" onClick={() => void refreshVersions()} disabled={!a.sbPageId || loadingVersions} title="Squad beyondから読み込み直す">更新</Button>
+          </div>
         </Field>
       </div>
-      {pages.length === 0 ? <p className="text-xs text-ink-3">Squad beyondのページがまだ取り込まれていません。「URLを入力」から登録できます。</p> : null}
+      {loadingBody ? <p className="text-xs text-ink-3">Versionの本文とファーストビューを取得しています…</p> : null}
       <Field label="記事LPのURL（自動入力）" error={errors.url}>
-        <ReadonlyValue>{a.url || "https://［Versionの公開URL］"}</ReadonlyValue>
+        <ReadonlyValue>{a.url || "https://［VersionのURL］"}</ReadonlyValue>
       </Field>
     </>
   );
@@ -145,7 +227,7 @@ function UrlSource({ state, set, onBody, errors }: SourceProps) {
         set({ existingId: res.existing.id, title: res.existing.title ?? "" });
         return;
       }
-      onBody({ title: a.title || res.title || "", bodyText: res.bodyText });
+      onBody({ title: a.title || res.preview.title || res.title || "", bodyText: res.bodyText, preview: res.preview });
     } catch (err) {
       toast.error(`${errorMessage(err)}　本文を貼り付けてください`);
     } finally {
@@ -156,7 +238,7 @@ function UrlSource({ state, set, onBody, errors }: SourceProps) {
   return (
     <div className="grid gap-3 md:grid-cols-[1fr_auto] items-end">
       <Field label="記事LPのURL" required error={errors.url}>
-        <Input value={a.url} onChange={(e) => set({ url: e.target.value })} onBlur={capture} placeholder="https://" invalid={Boolean(errors.url)} />
+        <Input value={a.url} onChange={(e) => set({ url: e.target.value, existingId: "" })} onBlur={capture} placeholder="https://" invalid={Boolean(errors.url)} />
       </Field>
       <Button onClick={() => { lastCaptured.current = ""; void capture(); }} disabled={capturing || !a.url.trim().startsWith("https://")}>{capturing ? "取得中…" : "本文を取得"}</Button>
     </div>
@@ -178,15 +260,8 @@ function ScreenshotPanel({ state, set }: Pick<SourceProps, "state" | "set">) {
   };
   return (
     <div className="bg-canvas border border-line p-3 flex flex-col gap-2 self-start">
-      <div className="h-[300px] bg-thumb-2 overflow-hidden flex items-center justify-center">
-        {a.screenshotKey ? (
-          // eslint-disable-next-line @next/next/no-img-element -- private R2 file
-          <img src={`/api/files/${a.screenshotKey}`} alt="記事LPのスクリーンショット" className="w-full h-full object-cover object-top" />
-        ) : (
-          <span className="text-xs text-ink-4">スクリーンショット未登録</span>
-        )}
-      </div>
-      <p className="text-xs text-ink-3">全画面スクリーンショット（自動撮影は今後対応予定）</p>
+      <LpPreviewImage preview={a.preview} screenshotKey={a.screenshotKey || null} className="h-[300px]" emptyLabel="本文を取得するとファーストビューを表示します" />
+      <p className="text-xs text-ink-3">{a.screenshotKey ? "アップロードしたスクリーンショット" : a.preview?.ogImage ? "OGP画像" : a.preview?.images.length ? "記事LPのファーストビュー（自動取得）" : "スクリーンショット（任意）"}</p>
       <button type="button" className="text-xs font-bold underline text-left" onClick={() => inputRef.current?.click()}>
         {a.screenshotKey ? "別の画像に差し替える" : "手動でアップロード"}
       </button>

@@ -2,7 +2,9 @@ import "server-only";
 import { ulid } from "ulid";
 import { getBindings } from "../env";
 import { ApiError } from "../http";
-import { CONTENT_TYPE, htmlToText, isSafePublicUrl, sniff, UPLOAD_RULES, type UploadPurpose } from "@/lib/domain/files";
+import { extractLpPreview, type LpPreview } from "@/lib/domain/lp-preview";
+import { safeFetch } from "../safe-fetch";
+import { CONTENT_TYPE, htmlToText, sniff, UPLOAD_RULES, type UploadPurpose } from "@/lib/domain/files";
 
 function bucket() {
   const r2 = getBindings().FILES;
@@ -55,21 +57,20 @@ export async function deleteFiles(keys: readonly string[]): Promise<void> {
 }
 
 /**
- * J-11 (partial): fetches the LP and extracts title + body text.
+ * J-11 (partial): fetches the LP and extracts title, body text and a preview (OGP or first-view images).
  * Full-page / first-view screenshots need the Browser Rendering binding (follow-up);
  * until then the wizard offers manual screenshot upload.
  */
-export async function captureArticle(url: string): Promise<{ title: string | null; bodyText: string }> {
-  if (!isSafePublicUrl(url)) throw new ApiError("VALIDATION_ERROR", "このURLは取得できません（社内ネットワーク宛てなど）", [{ field: "url", reason: "unsafe_url" }]);
+export async function captureArticle(url: string): Promise<{ title: string | null; bodyText: string; preview: LpPreview }> {
   let res: Response;
   try {
-    res = await fetch(url, { redirect: "follow", headers: { "user-agent": "Mozilla/5.0 (compatible; LPKnowledgeBot/1.0)", accept: "text/html" }, signal: AbortSignal.timeout(15_000) });
-  } catch {
+    res = await safeFetch(url, { headers: { "user-agent": "Mozilla/5.0 (compatible; LPKnowledgeBot/1.0)", accept: "text/html" }, timeoutMs: 15_000 });
+  } catch (err) {
+    if (err instanceof ApiError && err.code === "VALIDATION_ERROR") throw new ApiError("VALIDATION_ERROR", `${err.message}（社内ネットワーク宛てなど）`, [{ field: "url", reason: "unsafe_url" }]);
     throw new ApiError("UPSTREAM_ERROR", "記事LPを取得できませんでした。本文を貼り付けてください");
   }
-  if (!isSafePublicUrl(res.url || url)) throw new ApiError("VALIDATION_ERROR", "リダイレクト先のURLは取得できません");
   if (!res.ok) throw new ApiError("UPSTREAM_ERROR", `記事LPを取得できませんでした（HTTP ${res.status}）。本文を貼り付けてください`);
   const html = (await res.text()).slice(0, 3_000_000);
   const { title, text } = htmlToText(html);
-  return { title, bodyText: text.slice(0, 100_000) };
+  return { title, bodyText: text.slice(0, 100_000), preview: extractLpPreview(html, res.url || url) };
 }

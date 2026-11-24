@@ -25,7 +25,7 @@ export interface R2Like {
   delete(key: string | string[]): Promise<void>;
 }
 export interface AiLike {
-  run(model: string, input: { text: string[] }): Promise<{ data: number[][] }>;
+  run<T = unknown>(model: string, input: Record<string, unknown>): Promise<T>;
 }
 export interface Bindings {
   FILES?: R2Like;

@@ -10,7 +10,7 @@ const MAX_SEARCH_TEXT = 8000;
 export async function embed(texts: string[]): Promise<number[][] | null> {
   const ai = getBindings().AI;
   if (!ai || texts.length === 0) return null;
-  const res = await ai.run(EMBEDDING_MODEL, { text: texts });
+  const res = await ai.run<{ data: number[][] }>(EMBEDDING_MODEL, { text: texts });
   return res.data;
 }
 

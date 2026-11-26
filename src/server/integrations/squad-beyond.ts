@@ -4,14 +4,16 @@ import { getEnv } from "../env";
 import { htmlToText } from "@/lib/domain/files";
 import {
   SB_DEFAULT_BASE_URL, joinUrl, parseArticles, parseHtml, parseOperationRows, parsePagesResponse, parseRankingsResponse,
-  parseUrlSearchResponse, parseVersionSummaryRow,
-  type SbCreative, type SbOperationRow, type SbPage, type SbRankedPage, type SbVersion, type SbVersionTotals,
+  parseFolderSearchResponse, parseUrlSearchResponse, parseVersionSummaryRow,
+  type SbCreative, type SbFolder, type SbOperationRow, type SbPage, type SbRankedPage, type SbVersion, type SbVersionTotals,
 } from "./squad-beyond-mapping";
 
 // Squad beyond public API client (spec 6-1). Endpoints and fields follow
 // https://public-api.squadbeyond.com/api-docs/v1/swagger.yaml; mapping lives in squad-beyond-mapping.ts.
 
-export type { SbCreative, SbOperationRow, SbPage, SbRankedPage, SbVersion } from "./squad-beyond-mapping";
+export type { SbCreative, SbFolder, SbOperationRow, SbPage, SbRankedPage, SbVersion } from "./squad-beyond-mapping";
+
+export type SbRankingSort = "page_view_count" | "ad_spending" | "media_impression";
 export { mapMedia } from "./squad-beyond-mapping";
 
 export class SbAuthError extends Error {}
@@ -20,10 +22,12 @@ export class SbNotConfiguredError extends Error {}
 
 export interface SquadBeyondClient {
   listPages(opts: { activeOnly: boolean }): Promise<SbPage[]>;
-  /** One call: pages ranked by page views over [startDate, endDate] (max 90 days), `perPage` at a time. */
-  listRankings(opts: { startDate: string; endDate: string; page: number; perPage: number }): Promise<{ pages: SbRankedPage[]; totalPages: number }>;
-  /** One call: a single page of the page list (100 per page). */
-  listPagesPage(page: number): Promise<{ pages: SbPage[]; totalPages: number }>;
+  /** One call: pages ranked by `sort` (default page views) over [startDate, endDate] (max 90 days), `perPage` at a time. */
+  listRankings(opts: { startDate: string; endDate: string; page: number; perPage: number; sort?: SbRankingSort }): Promise<{ pages: SbRankedPage[]; totalPages: number }>;
+  /** One call: a single page of the page list (100 per page), optionally only some folders. */
+  listPagesPage(page: number, opts?: { folderIds?: readonly number[] }): Promise<{ pages: SbPage[]; totalPages: number }>;
+  /** One call: folders whose name matches `name` (up to 100). */
+  searchFolders(name: string): Promise<SbFolder[]>;
   getPageMaster(pageId: string): Promise<{ versions: SbVersion[]; creatives: SbCreative[] }>;
   getVersionContent(versionId: string): Promise<{ text: string }>;
   /** One call: the Version's rendered HTML (text, preview images). */
@@ -94,15 +98,21 @@ class HttpSquadBeyondClient implements SquadBeyondClient {
     throw lastError instanceof Error ? lastError : new Error("Squad beyond request failed");
   }
 
-  async listRankings(opts: { startDate: string; endDate: string; page: number; perPage: number }): Promise<{ pages: SbRankedPage[]; totalPages: number }> {
+  async listRankings(opts: { startDate: string; endDate: string; page: number; perPage: number; sort?: SbRankingSort }): Promise<{ pages: SbRankedPage[]; totalPages: number }> {
     return parseRankingsResponse(await this.get<unknown>("ab_tests/rankings", {
-      sort: "page_view_count", sort_direction: "desc", start_date: opts.startDate, end_date: opts.endDate,
+      sort: opts.sort ?? "page_view_count", sort_direction: "desc", start_date: opts.startDate, end_date: opts.endDate,
       page: String(opts.page), per_page: String(opts.perPage),
     }));
   }
 
-  async listPagesPage(page: number): Promise<{ pages: SbPage[]; totalPages: number }> {
-    return parsePagesResponse(await this.get<unknown>("ab_tests", { page: String(page), per_page: String(PAGE_SIZE) }));
+  async listPagesPage(page: number, opts: { folderIds?: readonly number[] } = {}): Promise<{ pages: SbPage[]; totalPages: number }> {
+    const params: Record<string, string> = { page: String(page), per_page: String(PAGE_SIZE) };
+    if (opts.folderIds && opts.folderIds.length > 0) params.folder_ids = opts.folderIds.join(",");
+    return parsePagesResponse(await this.get<unknown>("ab_tests", params));
+  }
+
+  async searchFolders(name: string): Promise<SbFolder[]> {
+    return parseFolderSearchResponse(await this.get<unknown>("folders/searches", { name }));
   }
 
   async listPages(opts: { activeOnly: boolean }): Promise<SbPage[]> {

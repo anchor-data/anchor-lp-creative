@@ -43,7 +43,7 @@ function client(): SquadBeyondClient {
   }
 }
 
-async function withSb<T>(fn: (sb: SquadBeyondClient) => Promise<T>): Promise<T> {
+export async function withSb<T>(fn: (sb: SquadBeyondClient) => Promise<T>): Promise<T> {
   const sb = client();
   try {
     return await fn(sb);

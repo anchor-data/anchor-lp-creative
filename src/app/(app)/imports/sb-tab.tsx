@@ -3,9 +3,10 @@ import Link from "next/link";
 import { SB_CANDIDATES_PAGE_SIZE, candidatePages, listSbCandidates } from "@/server/services/candidates";
 import { JUDGE_LABEL, MEDIA } from "@/lib/domain/constants";
 import { EmptyState } from "@/components/ui";
-import { SB_BATCH_SIZE, getRefreshView } from "@/server/sb-refresh";
+import { SB_MAX_PAGES, getRefreshView } from "@/server/sb-refresh";
 import { CandidateRow } from "./sb-candidate-row";
 import { SbRefresh } from "./sb-refresh";
+import { SbSearch } from "./sb-search";
 
 export interface SbTabFilters {
   dismissed: boolean;
@@ -41,9 +42,10 @@ export async function SbTab({ filters }: { filters: SbTabFilters }) {
   return (
     <div className="flex flex-col gap-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <p className="text-sm text-ink-3 max-w-[640px]">「最新にする」でSquad beyondの直近30日にPVが多いbeyondページから配信実績を取り込み、当たり・まずまずで未登録の組み合わせを並べます。登録すると「自社実績」として蓄積に入り、以後は毎朝自動で数値が更新されます。</p>
-        <SbRefresh initial={refresh} batchSize={SB_BATCH_SIZE} />
+        <p className="text-sm text-ink-3 max-w-[640px]">「最新にする」でSquad beyondの直近30日に配信金額が多いbeyondページ（上位{SB_MAX_PAGES}件）から配信実績を取り込み、未登録のVersion×媒体を成果の良い順に並べます。それ以外のページは検索して取り込めます。登録すると「自社実績」として蓄積に入り、以後は毎朝自動で数値が更新されます。</p>
+        <SbRefresh initial={refresh} maxPages={SB_MAX_PAGES} />
       </div>
+      <SbSearch />
       <div className="flex flex-wrap items-center gap-2">
         <Link href={href({ status: null })} className={`${PILL} ${!dismissed ? "bg-ink text-white border-ink" : "bg-white border-line-2"}`}>未処理　{dismissed ? "" : total}</Link>
         <Link href={href({ status: "dismissed" })} className={`${PILL} ${dismissed ? "bg-ink text-white border-ink" : "bg-white border-line-2"}`}>対象外にしたもの</Link>

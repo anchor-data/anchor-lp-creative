@@ -190,10 +190,10 @@ export function combineVersionTotals(parts: readonly Omit<SbVersionTotals, "days
 
 const rankingsResponseSchema = z.object({
   pagination: z.object({ total_pages: z.number().int().optional() }).passthrough().optional(),
-  ab_tests: z.array(pageSchema.extend({ metrics: z.object({ page_view_count: num }).passthrough().nullish() })),
+  ab_tests: z.array(pageSchema.extend({ metrics: z.object({ page_view_count: num, ad_spending: num }).passthrough().nullish() })),
 });
 
-export interface SbRankedPage extends SbPage { pageViews: number }
+export interface SbRankedPage extends SbPage { pageViews: number; adSpending: number }
 
 /** /ab_tests/rankings: pages ordered by a metric over a period, with that period's totals. */
 export function parseRankingsResponse(body: unknown): { pages: SbRankedPage[]; totalPages: number } {
@@ -206,14 +206,30 @@ export function parseRankingsResponse(body: unknown): { pages: SbRankedPage[]; t
     url: p.delivery_url ?? null,
     media: mapMedia(p.media?.name ?? ""),
     pageViews: p.metrics?.page_view_count ?? 0,
+    adSpending: p.metrics?.ad_spending ?? 0,
     raw: p as unknown,
   }));
   return { pages, totalPages: data.pagination?.total_pages ?? 1 };
 }
 
-/** True when the ranking has another page and the batch just loaded was full of pages that still had views. */
-export function hasMoreBatches(batch: number, totalPages: number, returned: number, withViews: number): boolean {
-  return returned > 0 && withViews === returned && batch < totalPages;
+/** True when the ranking has another page and the batch just loaded was full of pages that still had spend. */
+export function hasMoreBatches(batch: number, totalPages: number, returned: number, withSpend: number): boolean {
+  return returned > 0 && withSpend === returned && batch < totalPages;
+}
+
+const folderSearchSchema = z.object({ folders: z.array(z.object({ id: z.number().int(), name: z.string().nullish() }).passthrough()) });
+
+export interface SbFolder { id: number; name: string }
+
+/** /folders/searches: folders whose name matches (Meilisearch, up to 100). */
+export function parseFolderSearchResponse(body: unknown): SbFolder[] {
+  return folderSearchSchema.parse(body).folders.map((f) => ({ id: f.id, name: f.name ?? String(f.id) }));
+}
+
+/** A pasted delivery / preview / console URL or a bare UID: looked up with /ab_tests/url_search instead of by name. */
+export function looksLikeSbLocator(q: string): boolean {
+  const s = q.trim();
+  return /^https?:\/\//i.test(s) || /^[A-Za-z0-9_-]{16,}$/.test(s);
 }
 
 /** Media of a page from its stored sb_pages.raw_json (the Branch Operation rows carry none). */

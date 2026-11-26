@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireUser } from "@/server/auth";
+import { listCategoriesAdmin } from "@/server/services/admin";
 import { ApiError } from "@/server/http";
 import { getCombinationDetail, getDailyMetrics, getRelated, type CombinationDetail, type RelatedRow } from "@/server/services/combination-detail";
 import { blockLabel, JUDGE_LABEL, mediaLabel } from "@/lib/domain/constants";
@@ -25,7 +26,16 @@ export default async function CombinationPage({ params, searchParams }: PageProp
     if (err instanceof ApiError && err.code === "NOT_FOUND") notFound();
     throw err;
   }
-  const [related, daily] = await Promise.all([getRelated(id), d.metricsSource === "sb" ? getDailyMetrics(id) : Promise.resolve([])]);
+  const canEdit = can(user.role, "edit_any") || (can(user.role, "edit_own") && user.id === d.createdBy.id);
+  const [related, daily, cats] = await Promise.all([
+    getRelated(id),
+    d.metricsSource === "sb" ? getDailyMetrics(id) : Promise.resolve([]),
+    canEdit ? listCategoriesAdmin() : Promise.resolve([]),
+  ]);
+  const categoryOptions = cats.filter((c) => !c.parentId && c.isActive).map((p) => ({
+    id: p.id, name: p.name,
+    children: cats.filter((c) => c.parentId === p.id && (c.isActive || c.id === d.category.id)).map((c) => ({ id: c.id, name: c.name })),
+  }));
   const kindLabel = d.creative.kind === "video" ? `動画 ${d.creative.durationSec ? `${Math.round(d.creative.durationSec)}秒` : ""}${d.creative.width && d.creative.height ? `・${aspect(d.creative.width, d.creative.height)}` : ""}` : `バナー${d.creative.width ? `・${d.creative.width}×${d.creative.height}` : ""}`;
 
   return (
@@ -61,10 +71,19 @@ export default async function CombinationPage({ params, searchParams }: PageProp
         </div>
         <DetailActions
           id={d.id}
-          updatedAt={d.updatedAt}
-          origin={d.origin}
-          canOverride={can(user.role, "judge_override")}
+          canEdit={canEdit}
           canDelete={canDelete(user.role, user.id, d.createdBy.id)}
+          edit={{
+            initial: {
+              updatedAt: d.updatedAt, productName: d.product.name, categoryId: d.category.id, articleTitle: d.article.title ?? "",
+              media: d.media, startDate: d.startDate, endDate: d.endDate, targetCpa: d.targetCpa,
+              judge: d.judgeManual?.value === "hit" || d.judgeManual?.value === "fair" || d.judgeManual?.value === "miss" ? d.judgeManual.value : "auto",
+              judgeReason: d.judgeManual?.reason ?? "",
+            },
+            categories: categoryOptions,
+            mediaLocked: d.metricsSource === "sb" || d.metricsSource === "dpro",
+            market: d.origin === "market",
+          }}
         />
       </div>
 

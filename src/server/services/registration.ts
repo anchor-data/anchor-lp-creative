@@ -7,6 +7,7 @@ import type { CurrentUser } from "../auth";
 import type { RegistrationInput } from "@/lib/domain/registration";
 import { recomputeJudgments } from "./judging";
 import { refreshSearchIndex } from "./embeddings";
+import { SB_ALL_CREATIVES } from "@/lib/domain/sb-creative";
 
 /** Required tag types (訴求軸) must have at least one tag. */
 async function assertRequiredTags(tagIds: readonly string[]): Promise<void> {
@@ -86,10 +87,15 @@ export async function register(user: CurrentUser, input: RegistrationInput): Pro
     statements.push(audit("article", articleId, { url: a.url, title: a.title }));
   }
 
-  // 4. Combination (SB combos are unique per Version × creative × media)
+  // 4. Combination (SB combos are unique per Version × creative × media; a Version total "*"
+  // overlaps every parameter of that Version × media, so the two never coexist)
   const cb = input.combination;
   if (cb.metricsSource === "sb") {
-    const dup = (await client.execute({ sql: "SELECT id FROM combinations WHERE sb_version_id = ? AND sb_creative_id = ? AND media = ? AND deleted_at IS NULL", args: [cb.sbVersionId!, cb.sbCreativeId!, cb.media] })).rows[0];
+    const dup = (await client.execute({
+      sql: `SELECT id FROM combinations WHERE sb_version_id = ? AND media = ? AND deleted_at IS NULL
+            AND (sb_creative_id = ? OR sb_creative_id = ? OR ? = ?) LIMIT 1`,
+      args: [cb.sbVersionId!, cb.media, cb.sbCreativeId!, SB_ALL_CREATIVES, cb.sbCreativeId!, SB_ALL_CREATIVES],
+    })).rows[0];
     if (dup) throw new ApiError("DUPLICATE", "このSquad beyondの組み合わせは登録済みです", [{ field: "combination", reason: "duplicate_sb", existingId: String(dup.id) }]);
   }
   const combinationId = ulid();

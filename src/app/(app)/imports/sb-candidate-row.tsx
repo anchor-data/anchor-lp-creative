@@ -5,6 +5,7 @@ import type { SbCandidate } from "@/server/services/candidates";
 import { DISMISS_REASONS, METRIC_LABEL } from "@/lib/domain/constants";
 import { formatMetric } from "@/lib/domain/judge-text";
 import { date } from "@/lib/format";
+import { sbCreativeLabel } from "@/lib/domain/sb-creative";
 import { Button, JudgeBadge, LinkButton, MediaBadge, Select } from "@/components/ui";
 import { api, errorMessage } from "@/components/client";
 import { useToast } from "@/components/toast";
@@ -38,7 +39,7 @@ export function CandidateRow({ c }: { c: SbCandidate }) {
         </div>
         <p className="font-bold">{c.pageName ?? "（beyondページ未同期）"}</p>
         <p className="text-sm text-ink-3">
-          Version：{c.versionName ?? c.id}　｜　クリエイティブ：{c.creativeName ?? "—"}　｜　候補になった日：{date(c.firstSeenAt)}
+          Version：{c.versionName ?? c.id}　｜　クリエイティブ：{sbCreativeLabel(c.creativeId, c.creativeName, c.parameterCount)}　｜　候補になった日：{date(c.firstSeenAt)}
         </p>
         {c.dismissReason ? <p className="text-xs text-ink-3 mt-1">対象外の理由：{c.dismissReason}</p> : null}
       </div>

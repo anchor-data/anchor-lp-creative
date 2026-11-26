@@ -52,7 +52,7 @@ export async function recommend(p: ProductInput, weights?: RecWeights, limit = 2
                  p.category_id, cat.parent_id, p.target_gender, p.target_age, p.target_pain,
                  COALESCE(c.judge_manual, c.judge_auto, CASE WHEN c.origin = 'market' THEN 'hit' END) judge,
                  (SELECT GROUP_CONCAT(t.name, '|') FROM tags t WHERE t.id IN (SELECT tag_id FROM creative_tags WHERE creative_id = c.creative_id UNION SELECT tag_id FROM article_tags WHERE article_id = c.article_id)) tag_names,
-                 (SELECT SUM(spend) * 1.0 / NULLIF(SUM(cv), 0) FROM sb_metrics_daily s WHERE s.sb_version_id = c.sb_version_id AND s.sb_creative_id = c.sb_creative_id AND s.media = c.media) sb_cpa,
+                 (SELECT SUM(spend) * 1.0 / NULLIF(SUM(cv), 0) FROM sb_metrics_keyed s WHERE s.sb_version_id = c.sb_version_id AND s.sb_creative_id = c.sb_creative_id AND s.media = c.media) sb_cpa,
                  (SELECT SUM(spend) * 1.0 / NULLIF(SUM(cv), 0) FROM manual_metrics mm WHERE mm.combination_id = c.id) mm_cpa,
                  (SELECT est_spend FROM market_metrics WHERE combination_id = c.id ORDER BY snapshot_date DESC LIMIT 1) est_spend,
                  (SELECT delivery_days FROM market_metrics WHERE combination_id = c.id ORDER BY snapshot_date DESC LIMIT 1) delivery_days

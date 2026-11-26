@@ -7,7 +7,9 @@ import { ApiError, notFound } from "../http";
 import type { CurrentUser } from "../auth";
 import type { JudgeBasis, JudgeResult } from "@/lib/domain/judge";
 import { DISMISS_REASONS } from "@/lib/domain/constants";
+import { SB_ALL_CREATIVES_LABEL, isAllCreatives } from "@/lib/domain/sb-creative";
 import { refreshSearchIndex } from "./embeddings";
+import { SB_CANDIDATE_ORDER } from "./sb-candidate-order";
 
 const str = (v: unknown): string | null => (v === null || v === undefined ? null : String(v));
 const num = (v: unknown): number | null => (v === null || v === undefined ? null : Number(v));
@@ -20,7 +22,10 @@ export interface SbCandidate {
   pageName: string | null;
   versionName: string | null;
   versionUrl: string | null;
+  creativeId: string;
   creativeName: string | null;
+  /** Ad parameters behind a Version total (creative "*"); null for a single parameter. */
+  parameterCount: number | null;
   media: string;
   judge: JudgeResult;
   basis: JudgeBasis;
@@ -42,7 +47,7 @@ export interface SbCandidateFilter {
   limit?: number;
 }
 
-/** Every candidate matching the filter: hit → fair → pending → miss, then by spend. */
+/** Every candidate matching the filter, in SB_CANDIDATE_ORDER. */
 export async function listSbCandidates(filter: SbCandidateFilter): Promise<{ items: SbCandidate[]; total: number }> {
   const clauses = ["sc.status = ?"];
   const args: InValue[] = [filter.status];
@@ -66,22 +71,24 @@ export async function listSbCandidates(filter: SbCandidateFilter): Promise<{ ite
   });
   const res = await getRawClient().execute({
     sql: `SELECT sc.*, v.page_id, v.name vname, v.url vurl, sp.name pname, cr.name cname,
+                 (SELECT COUNT(DISTINCT m.sb_creative_id) FROM sb_metrics_daily m WHERE m.sb_version_id = sc.sb_version_id AND m.media = sc.media) n_params,
                  t.spend t_spend, t.cv t_cv, t.mcv t_mcv, t.base t_base, t.fsver t_fsver, t.oar t_oar
           FROM sb_candidates sc LEFT JOIN sb_versions v ON v.id = sc.sb_version_id
           LEFT JOIN (
             SELECT sb_version_id, sb_creative_id, media, SUM(spend) spend, SUM(cv) cv, SUM(mcv) mcv, COALESCE(SUM(pv), SUM(click)) base,
                    SUM(fsver * pv) / NULLIF(SUM(CASE WHEN fsver IS NOT NULL THEN pv END), 0) fsver,
                    SUM(oar * pv) / NULLIF(SUM(CASE WHEN oar IS NOT NULL THEN pv END), 0) oar
-            FROM sb_metrics_daily GROUP BY sb_version_id, sb_creative_id, media
+            FROM sb_metrics_keyed GROUP BY sb_version_id, sb_creative_id, media
           ) t ON t.sb_version_id = sc.sb_version_id AND t.sb_creative_id = sc.sb_creative_id AND t.media = sc.media
           LEFT JOIN sb_pages sp ON sp.id = v.page_id LEFT JOIN sb_creatives cr ON cr.id = sc.sb_creative_id
           WHERE ${where}
-          ORDER BY CASE sc.judge WHEN 'hit' THEN 0 WHEN 'fair' THEN 1 WHEN 'pending' THEN 2 ELSE 3 END, COALESCE(t.spend, 0) DESC, sc.first_seen_at DESC
+          ORDER BY ${SB_CANDIDATE_ORDER}
           LIMIT ?`,
     args: [...args, limit],
   });
   const items = res.rows.map((r) => ({
-    id: String(r.id), pageId: str(r.page_id), pageName: str(r.pname), versionName: str(r.vname), versionUrl: str(r.vurl), creativeName: str(r.cname),
+    id: String(r.id), pageId: str(r.page_id), pageName: str(r.pname), versionName: str(r.vname), versionUrl: str(r.vurl), creativeId: String(r.sb_creative_id), creativeName: str(r.cname),
+    parameterCount: isAllCreatives(str(r.sb_creative_id)) ? num(r.n_params) : null,
     media: String(r.media), judge: r.judge as JudgeResult, basis: JSON.parse(String(r.summary_json)) as JudgeBasis, status: String(r.status),
     dismissReason: str(r.dismiss_reason), firstSeenAt: String(r.first_seen_at), categoryId: str(r.category_id),
     totals: {
@@ -144,8 +151,8 @@ export async function candidatePrefill(id: string): Promise<{
   const r = (
     await getRawClient().execute({
       sql: `SELECT sc.*, v.page_id, v.url vurl, v.name vname, v.body_text, cr.name cname, sp.product_id,
-                   (SELECT MIN(date) FROM sb_metrics_daily m WHERE m.sb_version_id = sc.sb_version_id AND m.sb_creative_id = sc.sb_creative_id AND m.media = sc.media) first_date,
-                   (SELECT MAX(date) FROM sb_metrics_daily m WHERE m.sb_version_id = sc.sb_version_id AND m.sb_creative_id = sc.sb_creative_id AND m.media = sc.media) last_date
+                   (SELECT MIN(date) FROM sb_metrics_keyed m WHERE m.sb_version_id = sc.sb_version_id AND m.sb_creative_id = sc.sb_creative_id AND m.media = sc.media) first_date,
+                   (SELECT MAX(date) FROM sb_metrics_keyed m WHERE m.sb_version_id = sc.sb_version_id AND m.sb_creative_id = sc.sb_creative_id AND m.media = sc.media) last_date
             FROM sb_candidates sc LEFT JOIN sb_versions v ON v.id = sc.sb_version_id LEFT JOIN sb_creatives cr ON cr.id = sc.sb_creative_id
             LEFT JOIN sb_pages sp ON sp.id = v.page_id WHERE sc.id = ?`,
       args: [id],
@@ -155,7 +162,7 @@ export async function candidatePrefill(id: string): Promise<{
   return {
     candidateId: id, media: String(r.media), startDate: str(r.first_date), endDate: str(r.last_date), pageId: str(r.page_id),
     versionId: String(r.sb_version_id), versionUrl: str(r.vurl), versionName: str(r.vname), bodyText: str(r.body_text),
-    creativeId: String(r.sb_creative_id), creativeName: str(r.cname), productId: str(r.product_id), categoryId: str(r.category_id),
+    creativeId: String(r.sb_creative_id), creativeName: isAllCreatives(str(r.sb_creative_id)) ? SB_ALL_CREATIVES_LABEL : str(r.cname), productId: str(r.product_id), categoryId: str(r.category_id),
   };
 }
 

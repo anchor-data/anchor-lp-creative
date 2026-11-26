@@ -4,10 +4,11 @@ import { useState } from "react";
 import type { JudgeBasis } from "@/lib/domain/judge";
 import { basisSummary, formatMetric, thresholdText } from "@/lib/domain/judge-text";
 import { METRIC_LABEL } from "@/lib/domain/constants";
-import { Button, Field, LinkButton, Select, Textarea } from "@/components/ui";
+import { Button, LinkButton, Select, Textarea } from "@/components/ui";
 import { api, errorMessage } from "@/components/client";
 import { useToast } from "@/components/toast";
 import { useConfirm } from "@/components/confirm";
+import { EditPanel, type EditPanelProps } from "./edit-panel";
 
 export function JudgeBasisLine({ basis }: { basis: JudgeBasis | null }) {
   const [open, setOpen] = useState(false);
@@ -51,37 +52,27 @@ export function JudgeBasisLine({ basis }: { basis: JudgeBasis | null }) {
   );
 }
 
-export function DetailActions(props: { id: string; updatedAt: string; origin: "own" | "market"; canOverride: boolean; canDelete: boolean }) {
+interface DetailActionsProps {
+  id: string;
+  canEdit: boolean;
+  canDelete: boolean;
+  edit: Omit<EditPanelProps, "id" | "onClose">;
+}
+
+export function DetailActions({ id, canEdit, canDelete, edit }: DetailActionsProps) {
   const router = useRouter();
   const toast = useToast();
   const confirm = useConfirm();
-  const [overriding, setOverriding] = useState(false);
-  const [judge, setJudge] = useState<"hit" | "fair" | "miss">("hit");
-  const [reason, setReason] = useState("");
+  const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
-
-  const run = async (fn: () => Promise<unknown>, done: string) => {
-    setBusy(true);
-    try {
-      await fn();
-      toast.info(done);
-      router.refresh();
-      return true;
-    } catch (err) {
-      toast.error(errorMessage(err));
-      return false;
-    } finally {
-      setBusy(false);
-    }
-  };
 
   return (
     <div className="flex flex-col items-end gap-3">
       <div className="flex flex-wrap gap-2.5 justify-end">
-        {props.canOverride && props.origin === "own" ? (
-          <Button className="hidden md:inline-flex" onClick={() => setOverriding((o) => !o)}>判定を手動で変える</Button>
+        {canEdit ? (
+          <Button className="hidden md:inline-flex" onClick={() => setEditing((o) => !o)}>編集</Button>
         ) : null}
-        {props.canDelete ? (
+        {canDelete ? (
           <Button
             className="hidden md:inline-flex"
             disabled={busy}
@@ -95,7 +86,7 @@ export function DetailActions(props: { id: string; updatedAt: string; origin: "o
               if (!ok) return;
               setBusy(true);
               try {
-                await api(`/api/combinations/${props.id}`, { method: "DELETE" });
+                await api(`/api/combinations/${id}`, { method: "DELETE" });
                 toast.info("削除しました（30日間は復元できます）");
                 // Leave the page without refreshing it first: the deleted record would render as 404.
                 router.replace("/");
@@ -108,38 +99,11 @@ export function DetailActions(props: { id: string; updatedAt: string; origin: "o
             削除
           </Button>
         ) : null}
-        <LinkButton href={`/generate?ref=${props.id}`} variant="primary" className="hidden md:inline-flex">
+        <LinkButton href={`/generate?ref=${id}`} variant="primary" className="hidden md:inline-flex">
           この組み合わせを参考に生成
         </LinkButton>
       </div>
-      {overriding ? (
-        <div className="bg-white border border-line-2 p-4 w-full md:w-96 flex flex-col gap-3">
-          <Field label="手動の判定" required>
-            <Select value={judge} onChange={(e) => setJudge(e.target.value as typeof judge)}>
-              <option value="hit">当たり</option>
-              <option value="fair">まずまず</option>
-              <option value="miss">外れ</option>
-            </Select>
-          </Field>
-          <Field label="理由（任意）" hint="500文字以内。例：CPA目標内・消化額基準クリア" error={reason.length > 500 ? "理由は500文字以内にしてください" : null}>
-            <Textarea value={reason} onChange={(e) => setReason(e.target.value)} />
-          </Field>
-          <div className="flex justify-end gap-2">
-            <Button size="sm" onClick={() => setOverriding(false)}>やめる</Button>
-            <Button
-              size="sm"
-              variant="primary"
-              disabled={busy || reason.length > 500}
-              onClick={async () => {
-                const okDone = await run(() => api(`/api/combinations/${props.id}/judge-override`, { method: "PUT", json: { judge, reason, updatedAt: props.updatedAt } }), "判定を手動で変更しました");
-                if (okDone) setOverriding(false);
-              }}
-            >
-              保存
-            </Button>
-          </div>
-        </div>
-      ) : null}
+      {editing ? <EditPanel id={id} {...edit} onClose={() => setEditing(false)} /> : null}
     </div>
   );
 }

@@ -13,6 +13,7 @@ import {
   type MetricKey,
 } from "@/lib/domain/judge";
 import { addDays, daysBetween, jstToday } from "@/lib/format";
+import { SB_ALL_CREATIVES } from "@/lib/domain/sb-creative";
 
 export interface CategoryCriteria {
   rules: JudgeRule[];
@@ -65,18 +66,18 @@ interface SbKey {
   media: string;
 }
 
-/** Judge an SB (Version × creative × media) from sb_metrics_daily. */
+/** Judge an SB (Version × creative × media) from sb_metrics_keyed; creative "*" is the Version total. */
 export async function judgeSb(key: SbKey, startDate: string | null, criteria: CategoryCriteria, asOf = addDays(jstToday(), -1)): Promise<JudgeBasis> {
   const client = getRawClient();
   const first = await client.execute({
-    sql: "SELECT MIN(date) AS d FROM sb_metrics_daily WHERE sb_version_id = ? AND sb_creative_id = ? AND media = ?",
+    sql: "SELECT MIN(date) AS d FROM sb_metrics_keyed WHERE sb_version_id = ? AND sb_creative_id = ? AND media = ?",
     args: [key.sbVersionId, key.sbCreativeId, key.media],
   });
   const start = startDate ?? (first.rows[0]?.d ? String(first.rows[0].d) : asOf);
   const from = windowFrom(criteria.settings, start, asOf);
   const rows = await client.execute({
-    sql: `SELECT date, spend, cv, mcv, pv, click, fsver, oar FROM sb_metrics_daily
-          WHERE sb_version_id = ? AND sb_creative_id = ? AND media = ? AND date BETWEEN ? AND ?`,
+    sql: `SELECT date, spend, cv, mcv, pv, click, fsver, oar FROM sb_metrics_keyed
+          WHERE sb_version_id = ? AND sb_creative_id = ? AND media = ? AND date BETWEEN ? AND ? ORDER BY date`,
     args: [key.sbVersionId, key.sbCreativeId, key.media, from, asOf],
   });
   const daily: DailyRow[] = rows.rows.map((r) => ({
@@ -255,23 +256,26 @@ export async function previewCriteriaChange(categoryId: string, next: CategoryCr
 }
 
 /**
- * J-08: aggregate unregistered (Version × creative × media), judge with the page's
- * category (via sb_pages.product_id) or the default criteria, and upsert hit/fair
- * into sb_candidates. Dismissed candidates are never touched.
+ * J-08: aggregate unregistered (Version × media) over every ad parameter, judge with the page's
+ * category (via sb_pages.product_id) or the default criteria, and upsert into sb_candidates with
+ * sb_creative_id = '*'. A Version × media that already has a live combination (any parameter) is
+ * skipped. Dismissed / registered candidates are never touched.
  */
 export async function extractCandidates(): Promise<{ upserted: number }> {
   const client = getRawClient();
-  const res = await client.execute(`
-    SELECT m.sb_version_id, m.sb_creative_id, m.media, MIN(m.date) AS first_date, p.category_id
+  const res = await client.execute({
+    sql: `
+    SELECT m.sb_version_id, ? AS sb_creative_id, m.media, MIN(m.date) AS first_date, p.category_id
     FROM sb_metrics_daily m
     LEFT JOIN sb_versions v ON v.id = m.sb_version_id
     LEFT JOIN sb_pages sp ON sp.id = v.page_id
     LEFT JOIN products p ON p.id = sp.product_id
     WHERE NOT EXISTS (
-      SELECT 1 FROM combinations c WHERE c.deleted_at IS NULL AND c.sb_version_id = m.sb_version_id
-        AND c.sb_creative_id = m.sb_creative_id AND c.media = m.media)
-    GROUP BY m.sb_version_id, m.sb_creative_id, m.media`);
-  const existing = await client.execute("SELECT sb_version_id, sb_creative_id, media, status FROM sb_candidates");
+      SELECT 1 FROM combinations c WHERE c.deleted_at IS NULL AND c.sb_version_id = m.sb_version_id AND c.media = m.media)
+    GROUP BY m.sb_version_id, m.media`,
+    args: [SB_ALL_CREATIVES],
+  });
+  const existing = await client.execute({ sql: "SELECT sb_version_id, sb_creative_id, media, status FROM sb_candidates WHERE sb_creative_id = ?", args: [SB_ALL_CREATIVES] });
   const statusBy = new Map(existing.rows.map((r) => [`${r.sb_version_id}|${r.sb_creative_id}|${r.media}`, String(r.status)]));
 
   const defaults = await loadDefaultCriteria();

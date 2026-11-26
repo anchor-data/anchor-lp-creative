@@ -12,6 +12,7 @@ import type { CurrentUser } from "../auth";
 import { parseLpPreview, type LpPreview } from "@/lib/domain/lp-preview";
 import { parseVideoAnalysis, type VideoAnalysis } from "@/lib/domain/video-analysis";
 import { loadCriteria, type CategoryCriteria } from "./judging";
+import { SB_ALL_CREATIVES_LABEL, isAllCreatives } from "@/lib/domain/sb-creative";
 
 const num = (v: unknown): number | null => (v === null || v === undefined ? null : Number(v));
 const str = (v: unknown): string | null => (v === null || v === undefined ? null : String(v));
@@ -94,7 +95,7 @@ async function sbTotals(versionId: string, creativeId: string, media: string): P
                  SUM(sver * pv) / NULLIF(SUM(CASE WHEN sver IS NOT NULL THEN pv END), 0) sver,
                  SUM(ctvr * pv) / NULLIF(SUM(CASE WHEN ctvr IS NOT NULL THEN pv END), 0) ctvr,
                  SUM(media_ctr * media_imp) / NULLIF(SUM(CASE WHEN media_ctr IS NOT NULL THEN media_imp END), 0) media_ctr
-          FROM sb_metrics_daily WHERE sb_version_id = ? AND sb_creative_id = ? AND media = ?`,
+          FROM sb_metrics_keyed WHERE sb_version_id = ? AND sb_creative_id = ? AND media = ?`,
     args: [versionId, creativeId, media],
   });
   const r = res.rows[0] ?? {};
@@ -187,12 +188,12 @@ export async function getCombinationDetail(id: string, opts: { includeDeleted?: 
   if (r.sb_version_id) {
     const sbRes = await client.execute({
       sql: `SELECT sp.name page_name, v.name version_name, sc.name creative_name,
-                   (SELECT MAX(fetched_at) FROM sb_metrics_daily WHERE sb_version_id = ? AND sb_creative_id = ?) fetched_at
+                   (SELECT MAX(fetched_at) FROM sb_metrics_keyed WHERE sb_version_id = ? AND sb_creative_id = ?) fetched_at
             FROM sb_versions v LEFT JOIN sb_pages sp ON sp.id = v.page_id LEFT JOIN sb_creatives sc ON sc.id = ? WHERE v.id = ?`,
       args: [r.sb_version_id, r.sb_creative_id, r.sb_creative_id, r.sb_version_id],
     });
     const s = sbRes.rows[0];
-    sb = { pageName: str(s?.page_name), versionName: str(s?.version_name), creativeName: str(s?.creative_name), fetchedAt: str(s?.fetched_at) };
+    sb = { pageName: str(s?.page_name), versionName: str(s?.version_name), creativeName: isAllCreatives(str(r.sb_creative_id)) ? SB_ALL_CREATIVES_LABEL : str(s?.creative_name), fetchedAt: str(s?.fetched_at) };
   }
   let dpro: CombinationDetail["dpro"] = null;
   if (r.dpro_ad_id) {
@@ -262,7 +263,7 @@ export async function getRelated(id: string): Promise<{ sameCreative: RelatedRow
       sql: `SELECT c.id, a.title, cr.main_copy, cr.kind, c.media, COALESCE(c.judge_manual, c.judge_auto) judge,
                    COALESCE(s.spend, mm.spend) spend, COALESCE(s.cv, mm.cv) cv, COALESCE(s.mcv, mm.mcv) mcv, COALESCE(s.pv, mm.pv, mm.click) base
             FROM combinations c JOIN articles a ON a.id = c.article_id JOIN creatives cr ON cr.id = c.creative_id
-            LEFT JOIN (SELECT sb_version_id, sb_creative_id, media, SUM(spend) spend, SUM(cv) cv, SUM(mcv) mcv, SUM(pv) pv FROM sb_metrics_daily GROUP BY 1,2,3) s
+            LEFT JOIN (SELECT sb_version_id, sb_creative_id, media, SUM(spend) spend, SUM(cv) cv, SUM(mcv) mcv, SUM(pv) pv FROM sb_metrics_keyed GROUP BY 1,2,3) s
               ON c.metrics_source = 'sb' AND s.sb_version_id = c.sb_version_id AND s.sb_creative_id = c.sb_creative_id AND s.media = c.media
             LEFT JOIN (SELECT combination_id, SUM(spend) spend, SUM(cv) cv, SUM(mcv) mcv, SUM(pv) pv, SUM(click) click FROM manual_metrics GROUP BY 1) mm ON mm.combination_id = c.id
             WHERE c.deleted_at IS NULL AND c.${col} = ? ORDER BY (c.id = ?) DESC, c.created_at DESC LIMIT 20`,
@@ -292,7 +293,7 @@ export async function getDailyMetrics(id: string, media?: string): Promise<Daily
   if (!c) throw notFound("組み合わせ");
   if (!c.sb_version_id) return [];
   const res = await client.execute({
-    sql: `SELECT date, media, spend, cv FROM sb_metrics_daily WHERE sb_version_id = ? AND sb_creative_id = ? AND media = ? ORDER BY date`,
+    sql: `SELECT date, media, spend, cv FROM sb_metrics_keyed WHERE sb_version_id = ? AND sb_creative_id = ? AND media = ? ORDER BY date`,
     args: [c.sb_version_id, c.sb_creative_id, media ?? c.media],
   });
   return res.rows.map((r) => ({ date: String(r.date), media: String(r.media), spend: num(r.spend), cpa: num(r.cv) ? (num(r.spend) ?? 0) / Number(r.cv) : null }));

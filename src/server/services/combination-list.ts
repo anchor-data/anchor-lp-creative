@@ -91,7 +91,7 @@ const METRICS_CTE = `
 WITH sbt AS (
   SELECT sb_version_id, sb_creative_id, media,
          SUM(spend) AS spend, SUM(cv) AS cv, SUM(mcv) AS mcv, SUM(pv) AS pv, SUM(click) AS click
-  FROM sb_metrics_daily GROUP BY sb_version_id, sb_creative_id, media
+  FROM sb_metrics_keyed GROUP BY sb_version_id, sb_creative_id, media
 ),
 mmt AS (
   SELECT combination_id, SUM(spend) AS spend, SUM(cv) AS cv, SUM(mcv) AS mcv, SUM(pv) AS pv, SUM(click) AS click

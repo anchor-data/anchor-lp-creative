@@ -11,6 +11,7 @@ import { useToast } from "@/components/toast";
 import type { FormState, ManualJudge } from "../form-state";
 import { SectionLabel, toNumber, Toggle, ToggleGroup, type StepProps } from "./shared";
 import { SbFillPanel } from "./sb-fill-panel";
+import { SB_ALL_CREATIVES, SB_ALL_CREATIVES_LABEL, isAllCreatives } from "@/lib/domain/sb-creative";
 
 interface SbCreativeOption {
   id: string;
@@ -190,10 +191,11 @@ function SbMetrics({ state, creatives, loading, onReload, basis, errors, onCreat
       : creatives.length === 0 ? (c.startDate ? "この期間にこのVersionの配信はありません" : "配信開始日を入れると読み込みます") : "選んでください";
   return (
     <div className="flex flex-col gap-3">
-      <Field label="クリエイティブ（パラメータ）" required error={errors.sbVersionId ?? errors.sbCreativeId} hint="beyondページ・Versionは STEP3 で選んだもの。配信期間の実績をSquad beyondから読み込みます（消化額の多い順）">
+      <Field label="クリエイティブ（パラメータ）" required error={errors.sbVersionId ?? errors.sbCreativeId} hint="beyondページ・Versionは STEP3 で選んだもの。配信期間の実績をSquad beyondから読み込みます（消化額の多い順）。「すべてのパラメータ」はVersion全体の合計で登録します">
         <div className="flex gap-2">
           <Select value={c.sbCreativeId} onChange={(e) => onCreative(e.target.value)} disabled={!hasPage || loading}>
             <option value="">{placeholder}</option>
+            {hasPage && (creatives.length > 0 || isAllCreatives(c.sbCreativeId)) ? <option value={SB_ALL_CREATIVES}>{SB_ALL_CREATIVES_LABEL}</option> : null}
             {creatives.map((cr) => <option key={cr.id} value={cr.id}>{cr.name}{cr.spend !== null ? `（消化 ${yen(cr.spend)}・PV ${cr.pv ?? 0}）` : ""}</option>)}
           </Select>
           <Button size="sm" onClick={onReload} disabled={!hasPage || loading || !c.startDate} title="Squad beyondから読み込み直す">更新</Button>

@@ -72,7 +72,7 @@ async function loadRefs(ids: readonly string[]): Promise<RefCase[]> {
                  a.title, a.blocks_json, SUBSTR(a.body_text, 1, 1500) body,
                  (SELECT GROUP_CONCAT(t.name, '・') FROM tags t WHERE t.id IN (SELECT tag_id FROM creative_tags WHERE creative_id = c.creative_id UNION SELECT tag_id FROM article_tags WHERE article_id = c.article_id)) tags,
                  (SELECT GROUP_CONCAT(body, ' / ') FROM memos WHERE combination_id = c.id) memos,
-                 (SELECT SUM(spend) * 1.0 / NULLIF(SUM(cv), 0) FROM sb_metrics_daily s WHERE s.sb_version_id = c.sb_version_id AND s.sb_creative_id = c.sb_creative_id AND s.media = c.media) sb_cpa,
+                 (SELECT SUM(spend) * 1.0 / NULLIF(SUM(cv), 0) FROM sb_metrics_keyed s WHERE s.sb_version_id = c.sb_version_id AND s.sb_creative_id = c.sb_creative_id AND s.media = c.media) sb_cpa,
                  (SELECT SUM(spend) * 1.0 / NULLIF(SUM(cv), 0) FROM manual_metrics WHERE combination_id = c.id) mm_cpa
           FROM combinations c JOIN creatives cr ON cr.id = c.creative_id JOIN articles a ON a.id = c.article_id
           WHERE c.deleted_at IS NULL AND c.id IN (${ids.map(() => "?").join(",")})`,

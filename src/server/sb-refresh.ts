@@ -8,11 +8,14 @@ import { getSquadBeyondClient, SbAuthError, SbNotConfiguredError, SbRateLimitErr
 import { fetchPageRange, syncPageVersions, upsertRankedPages } from "./sb-sync";
 import { hasMoreBatches } from "./integrations/squad-beyond-mapping";
 
-// 取り込み候補 refresh, a few beyond pages at a time. Pages come from /ab_tests/rankings sorted by
-// page views over the last 30 days, so each batch costs about 1 + 2 × SB_BATCH_SIZE Squad beyond calls:
-// one ranking call, then a version list and one 30-day figures call per page.
+// 取り込み候補 refresh: the SB_MAX_PAGES beyond pages with the most ad spend over the last 30 days
+// (/ab_tests/rankings sort=ad_spending). The client loads them SB_BATCH_SIZE at a time so each request
+// stays short; a batch costs about 1 + 2 × SB_BATCH_SIZE Squad beyond calls (one ranking call, then a
+// version list and one 30-day figures call per page). Pages outside the top are found with the search.
 
-export const SB_BATCH_SIZE = 3;
+export const SB_BATCH_SIZE = 10;
+export const SB_MAX_PAGES = 50;
+const MAX_BATCHES = Math.ceil(SB_MAX_PAGES / SB_BATCH_SIZE);
 const RANGE_DAYS = 30;
 const KEY = "sb_refresh";
 const JOB = "J-16";
@@ -21,6 +24,8 @@ export interface SbRefreshView {
   status: "never" | "done";
   /** Ranking pages loaded so far (each holds SB_BATCH_SIZE beyond pages). */
   loadedBatches: number;
+  /** beyond pages loaded so far in this window (pages without spend are not counted). */
+  loadedPages: number;
   hasMore: boolean;
   rangeStart: string | null;
   rangeEnd: string | null;
@@ -28,7 +33,7 @@ export interface SbRefreshView {
   failures: string[];
 }
 
-const NEVER: SbRefreshView = { status: "never", loadedBatches: 0, hasMore: true, rangeStart: null, rangeEnd: null, at: null, failures: [] };
+const NEVER: SbRefreshView = { status: "never", loadedBatches: 0, loadedPages: 0, hasMore: true, rangeStart: null, rangeEnd: null, at: null, failures: [] };
 
 export async function getRefreshView(): Promise<SbRefreshView> {
   const row = (await getRawClient().execute({ sql: "SELECT value_json FROM settings WHERE key = ?", args: [KEY] })).rows[0];
@@ -78,12 +83,12 @@ export async function loadBatch(mode: "latest" | "more", userId: string): Promis
   await getRawClient().execute({ sql: "INSERT INTO job_runs (id, job, target_date, status, started_at) VALUES (?, ?, ?, 'running', ?)", args: [runId, JOB, rangeEnd, new Date().toISOString()] });
 
   try {
-    const ranked = await sb.listRankings({ startDate: rangeStart, endDate: rangeEnd, page: batch, perPage: SB_BATCH_SIZE });
-    // Pages with no views in the window have no figures, so they are skipped (and end the list).
-    const withViews = ranked.pages.filter((p) => p.pageViews > 0);
-    await upsertRankedPages(withViews);
+    const ranked = await sb.listRankings({ startDate: rangeStart, endDate: rangeEnd, page: batch, perPage: SB_BATCH_SIZE, sort: "ad_spending" });
+    // Pages with no spend in the window are not ads worth registering, so they are skipped (and end the list).
+    const withSpend = ranked.pages.filter((p) => p.adSpending > 0);
+    await upsertRankedPages(withSpend);
     const failures: string[] = [];
-    for (const page of withViews) {
+    for (const page of withSpend) {
       try {
         await syncPageVersions(sb, page.id);
         await fetchPageRange(sb, page, rangeStart, rangeEnd);
@@ -96,7 +101,8 @@ export async function loadBatch(mode: "latest" | "more", userId: string): Promis
     const view: SbRefreshView = {
       status: "done",
       loadedBatches: batch,
-      hasMore: hasMoreBatches(batch, ranked.totalPages, ranked.pages.length, withViews.length),
+      loadedPages: (more ? prev.loadedPages : 0) + withSpend.length,
+      hasMore: batch < MAX_BATCHES && hasMoreBatches(batch, ranked.totalPages, ranked.pages.length, withSpend.length),
       rangeStart, rangeEnd,
       at: new Date().toISOString(),
       failures: more ? [...prev.failures, ...failures] : failures,

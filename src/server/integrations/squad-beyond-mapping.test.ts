@@ -17,6 +17,8 @@ import {
   parseOperationRows,
   parsePagesResponse,
   parseRankingsResponse,
+  parseFolderSearchResponse,
+  looksLikeSbLocator,
   pageMediaFromRaw,
   selectCreativeRows,
   type SbOperationRow,
@@ -93,6 +95,41 @@ describe("parseRankingsResponse", () => {
     expect(r.totalPages).toBe(5);
     expect(r.pages.map((p) => [p.id, p.media, p.status, p.pageViews])).toEqual([["p1", "tiktok", "active", 1200], ["p2", "meta", "inactive", 0]]);
     expect(r.pages[0].folder).toBeNull();
+  });
+
+  it("reads ad spending (string or number) and defaults it to 0", () => {
+    const body = {
+      ab_tests: [
+        { uid: "p1", metrics: { page_view_count: 10, ad_spending: "123456" } },
+        { uid: "p2", metrics: { page_view_count: 10, ad_spending: 789 } },
+        { uid: "p3", metrics: { page_view_count: 10 } },
+      ],
+    };
+    expect(parseRankingsResponse(body).pages.map((p) => p.adSpending)).toEqual([123456, 789, 0]);
+  });
+});
+
+describe("parseFolderSearchResponse", () => {
+  it("maps folders to id and name", () => {
+    const body = { folders: [{ id: 7, team_id: 1, uid: "f7", name: "富山常備薬", domain: null }, { id: 8, uid: "f8" }] };
+    expect(parseFolderSearchResponse(body)).toEqual([{ id: 7, name: "富山常備薬" }, { id: 8, name: "8" }]);
+  });
+
+  it("rejects a body without a folder list", () => {
+    expect(() => parseFolderSearchResponse({ error: "forbidden" })).toThrow();
+  });
+});
+
+describe("looksLikeSbLocator", () => {
+  it("treats URLs and long UIDs as locators", () => {
+    expect(looksLikeSbLocator("https://lp.example.com/a?b=1")).toBe(true);
+    expect(looksLikeSbLocator("  -JPDwwgNuMHocnHciw ")).toBe(true);
+  });
+
+  it("treats names, short words and Japanese text as name searches", () => {
+    expect(looksLikeSbLocator("シビレ記事")).toBe(false);
+    expect(looksLikeSbLocator("02_260828")).toBe(false);
+    expect(looksLikeSbLocator("smartnews lp")).toBe(false);
   });
 });
 
